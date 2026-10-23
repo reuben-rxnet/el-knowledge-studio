@@ -1,0 +1,9 @@
+Application server restart (fictional test procedure)
+
+Before you start: wait for the green light from the Infra team.
+Step 1. On APPSRV-01 (10.0.0.11) stop the OrderSyncService.
+Step 2. On APPSRV-02 (10.0.0.12) stop the OrderSyncService and the ReportService.
+Step 3. Clear the queue ORDER_QUEUE. If there are an error, please ignore it.
+Step 4. Restart APPSRV-01 and APPSRV-02. Wait green light before starting services.
+Step 5. Start the OrderSyncService on both servers. Wait green light.
+Step 6. Check the logs for Error, Timeout and Deadlock. Record the result in the change ticket.

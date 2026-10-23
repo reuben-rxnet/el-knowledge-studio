@@ -1,0 +1,7 @@
+{
+  "protectedTerms": ["OrderSyncService", "ReportService", "APPSRV-01", "APPSRV-02", "10.0.0.11", "10.0.0.12"],
+  "mustKeepWarnings": ["green light"],
+  "mustFlag": ["ignore it"],
+  "forbidInQuiz": ["please ignore it"],
+  "expectClassificationAtLeast": "Confidential"
+}

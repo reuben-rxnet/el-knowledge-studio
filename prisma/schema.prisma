@@ -1,0 +1,468 @@
+// EL Knowledge Studio — data model (vertical slice).
+// Local: SQLite. Production target: PostgreSQL (change `provider` and run migrations).
+// Enumerations are stored as strings and validated in src/lib/domain so the schema stays portable
+// across SQLite and PostgreSQL. JSON payloads are stored as serialized strings for the same reason.
+// All identifiers are CUIDs — sequential internal IDs are never exposed.
+// See docs/data-model.md for the models planned beyond this slice.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  externalId  String?  @unique // Entra ID object id (oid) for company sign-in
+  lastSignInAt DateTime?
+  displayName String
+  initials    String
+  jobTitle    String
+  location    String
+  locale      String   @default("en")
+  isEnterpriseAdmin Boolean @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  memberships   WorkspaceMembership[]
+  ownedProjects Project[]       @relation("ProjectOwner")
+  comments      Comment[]
+  notifications Notification[]
+  reviewsAssigned ReviewRequest[] @relation("ReviewAssignee")
+}
+
+model Workspace {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  region      String
+  description String
+  defaultClassification String @default("Internal")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  memberships WorkspaceMembership[]
+  projects    Project[]
+}
+
+/// Role is a string key into the capability map in src/lib/permissions.
+model WorkspaceMembership {
+  id          String    @id @default(cuid())
+  userId      String
+  workspaceId String
+  roles       String    // comma-separated role keys, e.g. "creator,reviewer"
+  createdAt   DateTime  @default(now())
+  user        User      @relation(fields: [userId], references: [id])
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+
+  @@unique([userId, workspaceId])
+}
+
+model Project {
+  id               String    @id @default(cuid())
+  workspaceId      String
+  title            String
+  description      String
+  businessFunction String
+  processCategory  String
+  region           String
+  country          String
+  sourceSystem     String
+  audience         String
+  classification   String
+  primaryLanguage  String
+  targetLanguages  String    // comma-separated BCP-47 codes
+  destinations     String    // comma-separated destination keys
+  outputs          String    // comma-separated output keys
+  templateKey      String
+  sourceKind       String
+  status           String    // see ProjectStatus in src/lib/domain/status.ts
+  ownerId          String
+  backupOwnerName  String?
+  smeName          String?
+  approverName     String?
+  reviewFrequencyDays Int    @default(180)
+  lastReviewedAt   DateTime?
+  nextReviewAt     DateTime?
+  effectiveAt      DateTime?
+  currentVersion   Int       @default(1)
+  approvedVersion  Int?
+  publishedVersion Int?
+  durationSec      Int       @default(0)
+  views            Int       @default(0)
+  hue              Int       @default(205) // thumbnail tint
+  articleSummary   String?
+  articlePurpose   String?
+  prerequisites    String?
+  aiSuggestions    String?   // JSON: suggested title, function, audience, classification (+ reason)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  createdById      String
+  updatedById      String
+  deletedAt        DateTime?
+
+  workspace     Workspace          @relation(fields: [workspaceId], references: [id])
+  owner         User               @relation("ProjectOwner", fields: [ownerId], references: [id])
+  versions      ProjectVersion[]
+  sources       SourceAsset[]
+  jobs          ProcessingJob[]
+  scenes        Scene[]
+  script        ScriptSegment[]
+  steps         GuideStep[]
+  comments      Comment[]
+  reviews       ReviewRequest[]
+  publications  PublishingJob[]
+  translations  TranslationProject[]
+  faqs          FaqItem[]
+  quiz          QuizQuestion[]
+  reviewFlags   ReviewFlag[]
+  renders       RenderJob[]
+  translatedSegments TranslationSegment[]
+
+  @@index([workspaceId, status])
+  @@index([workspaceId, updatedAt])
+  @@index([ownerId])
+}
+
+model ProjectVersion {
+  id          String   @id @default(cuid())
+  projectId   String
+  number      Int
+  status      String
+  note        String
+  createdAt   DateTime @default(now())
+  createdById String
+  project     Project  @relation(fields: [projectId], references: [id])
+
+  @@unique([projectId, number])
+}
+
+model SourceAsset {
+  id          String   @id @default(cuid())
+  projectId   String
+  kind        String   // recording | video | audio | document | presentation | image
+  fileName    String
+  mimeType    String
+  sizeBytes   Int
+  durationSec Int?
+  checksum    String
+  scanStatus  String   @default("clean") // pending | clean | blocked (mock scanner)
+  storageKey  String   // region-aware storage key (local disk adapter in the prototype)
+  storedBytes Boolean  @default(false) // true when the file itself is stored (not only metadata)
+  extractedText String? // text from documents or the transcript, used as AI source material
+  createdAt   DateTime @default(now())
+  createdById String
+  project     Project  @relation(fields: [projectId], references: [id])
+
+  @@index([projectId])
+  @@index([checksum])
+}
+
+model ProcessingJob {
+  id            String    @id @default(cuid())
+  projectId     String
+  kind          String    @default("ContentGenerationJob")
+  status        String    // queued | running | waiting | succeeded | partial | failed | cancelled
+  correlationId String
+  startedAt     DateTime
+  simulatedMs   Int       @default(24000)
+  completedAt   DateTime?
+  materialized  Boolean   @default(false) // idempotency guard for generated-content write
+  mode          String    @default("live") // live: real pipeline runner; simulated: legacy timer
+  stageState    String    @default("{}") // JSON: { [stageKey]: { status, detail } }
+  leaseUntil    DateTime? // runner lease, so only one runner works a job and a crashed one can be resumed
+  errorCode     String?
+  attempt       Int       @default(1)
+  createdAt     DateTime  @default(now())
+  project       Project   @relation(fields: [projectId], references: [id])
+
+  @@index([projectId])
+  @@index([status])
+}
+
+model Scene {
+  id         String  @id @default(cuid())
+  projectId  String
+  order      Int
+  title      String
+  summary    String
+  startSec   Int
+  endSec     Int
+  focusZoom  Boolean @default(false)
+  redaction  Boolean @default(false)
+  project    Project @relation(fields: [projectId], references: [id])
+
+  @@index([projectId, order])
+}
+
+model ScriptSegment {
+  id           String  @id @default(cuid())
+  projectId    String
+  order        Int
+  startSec     Int
+  endSec       Int
+  originalText String  // raw transcript text
+  text         String  // current script text
+  origin       String  // ai | human | ai-edited
+  locked       Boolean @default(false) // human-approved: AI may not replace silently
+  flagged      String? // uncertain term flagged by AI
+  project      Project @relation(fields: [projectId], references: [id])
+
+  @@index([projectId, order])
+}
+
+model GuideStep {
+  id             String  @id @default(cuid())
+  projectId      String
+  order          Int
+  chapter        String
+  title          String
+  instruction    String
+  expectedResult String?
+  warning        String?
+  tip            String?
+  altText        String
+  sourceSec      Int
+  screenshotKey  String? // captured frame from the recording (storage key)
+  sourceRef      String? // where in a document the step comes from ("Page 2", "Slide 4", a heading); null for recordings
+  origin         String  // ai | human | ai-edited
+  markerX        Int     @default(40)
+  markerY        Int     @default(45)
+  project        Project @relation(fields: [projectId], references: [id])
+
+  @@index([projectId, order])
+}
+
+model FaqItem {
+  id        String  @id @default(cuid())
+  projectId String
+  question  String
+  answer    String
+  origin    String
+  project   Project @relation(fields: [projectId], references: [id])
+}
+
+model Comment {
+  id          String    @id @default(cuid())
+  projectId   String
+  authorId    String
+  body        String
+  anchorType  String    // project | step | scene
+  anchorRef   String?   // step or scene id
+  anchorLabel String?
+  timestampSec Int?
+  version     Int
+  resolvedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  project     Project   @relation(fields: [projectId], references: [id])
+  author      User      @relation(fields: [authorId], references: [id])
+
+  @@index([projectId, createdAt])
+}
+
+model ReviewRequest {
+  id            String    @id @default(cuid())
+  projectId     String
+  version       Int       // approval is bound to this exact version
+  stage         String    // sme | compliance | translation | approval
+  status        String    // open | approved | changes-requested | superseded
+  assigneeId    String
+  requestedById String
+  dueAt         DateTime
+  decidedAt     DateTime?
+  justification String?
+  createdAt     DateTime  @default(now())
+  project       Project   @relation(fields: [projectId], references: [id])
+  assignee      User      @relation("ReviewAssignee", fields: [assigneeId], references: [id])
+
+  @@index([assigneeId, status])
+  @@index([projectId])
+}
+
+model PublishingJob {
+  id          String   @id @default(cuid())
+  projectId   String
+  version     Int
+  destination String   // sharepoint | stream | teams | leonardo | knowzy | portal | package
+  target      String   // site / channel label
+  language    String
+  audience    String
+  status      String   // queued | succeeded | failed
+  simulated   Boolean  @default(true)
+  requireAck  Boolean  @default(false)
+  watermark   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  createdById String
+  project     Project  @relation(fields: [projectId], references: [id])
+
+  @@index([projectId])
+}
+
+model TranslationProject {
+  id            String   @id @default(cuid())
+  projectId     String
+  language      String
+  status        String   // machine | terminology | regional-review | approved | published
+  reviewerName  String
+  completion    Int
+  videoStatus   String
+  guideStatus   String
+  captionStatus String
+  voiceStatus   String
+  updatedAt     DateTime @updatedAt
+  project       Project  @relation(fields: [projectId], references: [id])
+
+  @@unique([projectId, language])
+}
+
+model Template {
+  id                 String @id @default(cuid())
+  key                String @unique
+  name               String
+  description        String
+  businessFunction   String
+  outputs            String
+  approvalWorkflow   String
+  defaultDestination String
+  structure          String
+}
+
+/// Immutable: the application only ever inserts audit events (see src/server/audit.ts).
+model AuditEvent {
+  id              String   @id @default(cuid())
+  occurredAt      DateTime @default(now())
+  actorId         String
+  actorName       String
+  action          String
+  resourceType    String
+  resourceId      String
+  resourceLabel   String
+  resourceVersion Int?
+  workspaceId     String
+  outcome         String   // success | denied | failure
+  correlationId   String
+  justification   String?
+
+  @@index([workspaceId, occurredAt])
+  @@index([resourceId])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  kind      String
+  title     String
+  body      String
+  href      String
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@index([userId, readAt])
+}
+
+model SearchFeedback {
+  id        String   @id @default(cuid())
+  userId    String
+  query     String
+  helpful   Boolean
+  reason    String?
+  createdAt DateTime @default(now())
+}
+
+model FeatureFlag {
+  key         String  @id
+  enabled     Boolean
+  description String
+}
+
+model QuizQuestion {
+  id            String  @id @default(cuid())
+  projectId     String
+  order         Int
+  kind          String  // single | multiple | true-false | sequence
+  question      String
+  options       String  // JSON array of strings
+  correct       String  // JSON array of option indexes
+  explanation   String
+  difficulty    String  // easy | medium | hard
+  objective     String
+  sourceStepOrder Int?
+  reviewStatus  String  @default("needs-review") // AI questions can't be published until reviewed
+  project       Project @relation(fields: [projectId], references: [id])
+
+  @@index([projectId, order])
+}
+
+/// Machine translation of one guide step or script paragraph. A regional reviewer approves it.
+model TranslationSegment {
+  id          String  @id @default(cuid())
+  projectId   String
+  language    String
+  sourceType  String  // step-title | step-instruction | script
+  sourceId    String
+  sourceText  String
+  text        String
+  status      String  @default("machine") // machine | reviewed
+  project     Project @relation(fields: [projectId], references: [id])
+
+  @@unique([projectId, language, sourceType, sourceId])
+}
+
+/// Issues the AI noticed in the SOURCE (risky, ambiguous, typo, missing information). The AI never changes
+/// the procedure itself; a person decides what to do with each flag.
+model ReviewFlag {
+  id          String    @id @default(cuid())
+  projectId   String
+  stepId      String?
+  kind        String    // risky | ambiguous | typo | missing-info | contradiction
+  quote       String    // the exact words from the source
+  note        String    // why it was flagged and what to check
+  status      String    @default("open") // open | resolved | dismissed
+  decidedById String?
+  decidedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  project     Project   @relation(fields: [projectId], references: [id])
+
+  @@index([projectId, status])
+}
+
+/// A rendered MP4 of one project version (FFmpeg on the server; production: a render worker container).
+model RenderJob {
+  id          String    @id @default(cuid())
+  projectId   String
+  version     Int
+  status      String    // queued | running | succeeded | failed
+  language    String
+  aiVoice     Boolean   @default(false)
+  voice       String?
+  detail      String    @default("Queued")
+  outputKey   String?
+  durationSec Int?
+  sizeBytes   Int?
+  errorCode   String?
+  createdById String
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+  project     Project   @relation(fields: [projectId], references: [id])
+
+  @@index([projectId, createdAt])
+}
+
+/// Pilot feedback from users. Free text is stored as typed; the audit log records only that feedback was sent.
+model FeedbackItem {
+  id        String   @id @default(cuid())
+  userId    String
+  workspaceId String
+  page      String
+  category  String   // idea | problem | praise | question
+  message   String
+  status    String   @default("new") // new | triaged | done
+  createdAt DateTime @default(now())
+
+  @@index([workspaceId, createdAt])
+}

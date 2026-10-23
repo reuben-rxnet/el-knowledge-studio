@@ -1,0 +1,394 @@
+{
+  "displayName": "EL Knowledge Studio",
+  "signInAudience": "AzureADMyOrg",
+  "web": {
+    "redirectUris": [
+      "https://knowledge-studio.essilorluxottica.com/api/auth/callback",
+      "http://localhost:3010/api/auth/callback"
+    ],
+    "logoutUrl": "https://knowledge-studio.essilorluxottica.com/sign-in",
+    "implicitGrantSettings": {
+      "enableIdTokenIssuance": false,
+      "enableAccessTokenIssuance": false
+    }
+  },
+  "requiredResourceAccess": [
+    {
+      "resourceAppId": "00000003-0000-0000-c000-000000000000",
+      "resourceAccess": [
+        {
+          "id": "37f7f235-527c-4136-accd-4a02d197296e",
+          "type": "Scope"
+        },
+        {
+          "id": "14dad69e-099b-42c9-810b-d002981feec1",
+          "type": "Scope"
+        },
+        {
+          "id": "64a6cdd6-aab1-4aaf-94b8-3cc8405e90d0",
+          "type": "Scope"
+        },
+        {
+          "id": "e1fe6dd8-ba31-4d61-89e7-88639da4683d",
+          "type": "Scope"
+        }
+      ]
+    }
+  ],
+  "groupMembershipClaims": "ApplicationGroup",
+  "optionalClaims": {
+    "idToken": [
+      {
+        "name": "email",
+        "essential": false
+      },
+      {
+        "name": "groups",
+        "essential": false
+      }
+    ]
+  },
+  "appRoles": [
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "enterprise-admin",
+      "displayName": "Enterprise administrator",
+      "description": "Global settings, all workspaces, AI provider and audit access.",
+      "id": "b79532b6-2b77-5e3b-8a1e-6f61e6d230fd",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "global-corporate.consumer",
+      "displayName": "Global Corporate Functions · Consumer",
+      "description": "Consumer in the Global Corporate Functions workspace.",
+      "id": "0124fafc-a872-52b0-88f4-b17ff46050e0",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "global-corporate.creator",
+      "displayName": "Global Corporate Functions · Creator",
+      "description": "Creator in the Global Corporate Functions workspace.",
+      "id": "ddbbb93a-c15c-5238-9268-cccbfe8707a7",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "global-corporate.editor",
+      "displayName": "Global Corporate Functions · Editor",
+      "description": "Editor in the Global Corporate Functions workspace.",
+      "id": "5dc73313-75f0-528e-a380-eb73de1a2ba9",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "global-corporate.reviewer",
+      "displayName": "Global Corporate Functions · Reviewer",
+      "description": "Reviewer in the Global Corporate Functions workspace.",
+      "id": "7187ed7f-f692-52b4-85ff-f8dd8eaa71a2",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "global-corporate.sme",
+      "displayName": "Global Corporate Functions · Subject-matter expert",
+      "description": "Subject-matter expert in the Global Corporate Functions workspace.",
+      "id": "de3215a6-c234-5fea-b0bf-3cf506a38ccc",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "global-corporate.translator",
+      "displayName": "Global Corporate Functions · Translator",
+      "description": "Translator in the Global Corporate Functions workspace.",
+      "id": "d119bda6-9347-584a-b024-fe7eb3a5e895",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "global-corporate.approver",
+      "displayName": "Global Corporate Functions · Approver",
+      "description": "Approver in the Global Corporate Functions workspace.",
+      "id": "2747399e-8404-5555-94da-e9e96b3d174f",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "global-corporate.publisher",
+      "displayName": "Global Corporate Functions · Publisher",
+      "description": "Publisher in the Global Corporate Functions workspace.",
+      "id": "90c6c294-dc7c-5890-b58e-cf7949738b04",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "global-corporate.workspace-admin",
+      "displayName": "Global Corporate Functions · Workspace administrator",
+      "description": "Workspace administrator in the Global Corporate Functions workspace.",
+      "id": "037f4b6a-b430-54f9-b000-5a6e4acd7d26",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "global-corporate.auditor",
+      "displayName": "Global Corporate Functions · Auditor",
+      "description": "Auditor in the Global Corporate Functions workspace.",
+      "id": "dd1fc421-33d1-5060-b34b-025cc008e5ee",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "operations.consumer",
+      "displayName": "Operations & Supply Chain · Consumer",
+      "description": "Consumer in the Operations & Supply Chain workspace.",
+      "id": "8a2c17f1-70ad-5780-b255-91680fcbcdeb",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "operations.creator",
+      "displayName": "Operations & Supply Chain · Creator",
+      "description": "Creator in the Operations & Supply Chain workspace.",
+      "id": "cb31bca3-7cc6-5bd1-88e9-339d1112078b",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "operations.editor",
+      "displayName": "Operations & Supply Chain · Editor",
+      "description": "Editor in the Operations & Supply Chain workspace.",
+      "id": "3a47ab09-7bc6-5255-b68f-2d455f866f44",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "operations.reviewer",
+      "displayName": "Operations & Supply Chain · Reviewer",
+      "description": "Reviewer in the Operations & Supply Chain workspace.",
+      "id": "dff82487-9bcd-57e5-a127-8d4406ba7dec",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "operations.sme",
+      "displayName": "Operations & Supply Chain · Subject-matter expert",
+      "description": "Subject-matter expert in the Operations & Supply Chain workspace.",
+      "id": "a08c2be0-737c-54bf-a59e-8a44c1431c42",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "operations.translator",
+      "displayName": "Operations & Supply Chain · Translator",
+      "description": "Translator in the Operations & Supply Chain workspace.",
+      "id": "4e17753f-efc7-51cd-aaa3-7b042110ff19",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "operations.approver",
+      "displayName": "Operations & Supply Chain · Approver",
+      "description": "Approver in the Operations & Supply Chain workspace.",
+      "id": "6e8be9bd-a24c-5163-83e1-30b9a7266ada",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "operations.publisher",
+      "displayName": "Operations & Supply Chain · Publisher",
+      "description": "Publisher in the Operations & Supply Chain workspace.",
+      "id": "26b3e623-bf09-5bf6-80f2-baf98a0a7b5b",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "operations.workspace-admin",
+      "displayName": "Operations & Supply Chain · Workspace administrator",
+      "description": "Workspace administrator in the Operations & Supply Chain workspace.",
+      "id": "42828d3f-a171-5471-bef8-f316a6f9978d",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "operations.auditor",
+      "displayName": "Operations & Supply Chain · Auditor",
+      "description": "Auditor in the Operations & Supply Chain workspace.",
+      "id": "2befea08-ffac-5291-98d3-136a83b40a51",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "retail-europe.consumer",
+      "displayName": "Retail Operations · Europe · Consumer",
+      "description": "Consumer in the Retail Operations · Europe workspace.",
+      "id": "924b251f-94ce-5afe-a429-27eff8345415",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "retail-europe.creator",
+      "displayName": "Retail Operations · Europe · Creator",
+      "description": "Creator in the Retail Operations · Europe workspace.",
+      "id": "adebbd20-e750-5249-a628-41f874cd1960",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "retail-europe.editor",
+      "displayName": "Retail Operations · Europe · Editor",
+      "description": "Editor in the Retail Operations · Europe workspace.",
+      "id": "95938617-0a8e-573a-8b6e-d4d4e09ce1e4",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "retail-europe.reviewer",
+      "displayName": "Retail Operations · Europe · Reviewer",
+      "description": "Reviewer in the Retail Operations · Europe workspace.",
+      "id": "1875a7eb-8d03-5e0f-b06b-707cc399fcfe",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "retail-europe.sme",
+      "displayName": "Retail Operations · Europe · Subject-matter expert",
+      "description": "Subject-matter expert in the Retail Operations · Europe workspace.",
+      "id": "82424030-a4cf-547b-b796-757610047edb",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "retail-europe.translator",
+      "displayName": "Retail Operations · Europe · Translator",
+      "description": "Translator in the Retail Operations · Europe workspace.",
+      "id": "f4319ac4-6ffa-5004-908d-323102a8e2e5",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "retail-europe.approver",
+      "displayName": "Retail Operations · Europe · Approver",
+      "description": "Approver in the Retail Operations · Europe workspace.",
+      "id": "ace39df2-3a83-5455-923b-3fc6dbf168bf",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "retail-europe.publisher",
+      "displayName": "Retail Operations · Europe · Publisher",
+      "description": "Publisher in the Retail Operations · Europe workspace.",
+      "id": "a59fd072-fb44-5269-b7ef-68a0304e816c",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "retail-europe.workspace-admin",
+      "displayName": "Retail Operations · Europe · Workspace administrator",
+      "description": "Workspace administrator in the Retail Operations · Europe workspace.",
+      "id": "2acf7e62-3922-50e9-b35b-272e22166d85",
+      "isEnabled": true,
+      "origin": "Application"
+    },
+    {
+      "allowedMemberTypes": [
+        "User"
+      ],
+      "value": "retail-europe.auditor",
+      "displayName": "Retail Operations · Europe · Auditor",
+      "description": "Auditor in the Retail Operations · Europe workspace.",
+      "id": "2893ec7b-e00d-5472-8a76-10da7fc3e705",
+      "isEnabled": true,
+      "origin": "Application"
+    }
+  ]
+}

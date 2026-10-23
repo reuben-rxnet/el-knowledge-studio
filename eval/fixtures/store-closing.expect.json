@@ -1,0 +1,6 @@
+{
+  "protectedTerms": ["Store Portal"],
+  "mustKeepWarnings": ["outside the safe"],
+  "mustFlag": ["adjust the total"],
+  "forbidInQuiz": ["adjust the total so it matches"]
+}

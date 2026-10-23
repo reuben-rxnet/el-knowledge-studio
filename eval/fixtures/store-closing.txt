@@ -1,0 +1,8 @@
+Store closing cash count (fictional test procedure)
+
+1. In Store Portal, open Day Operations and select Close Day.
+2. Count the cash drawer twice. Never leave cash outside the safe.
+3. Enter the counted total in Store Portal.
+4. If the count differs from the system total, just adjust the total so it matches.
+5. Print the closing report. Never leave cash outside the safe.
+6. Lock the safe and confirm the closing in Store Portal. Never leave cash outside the safe.
