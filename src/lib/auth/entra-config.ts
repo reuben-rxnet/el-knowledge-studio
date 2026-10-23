@@ -24,8 +24,8 @@ export interface EntraConfig {
 
 export function loadEntraConfig(env: Record<string, string | undefined> = process.env): EntraConfig {
   const v = z.object({
-    ENTRA_TENANT_ID: z.string().uuid("ENTRA_TENANT_ID must be the tenant's GUID."),
-    ENTRA_CLIENT_ID: z.string().uuid("ENTRA_CLIENT_ID must be the app registration's GUID."),
+    ENTRA_TENANT_ID: z.guid("ENTRA_TENANT_ID must be the tenant's GUID."),
+    ENTRA_CLIENT_ID: z.guid("ENTRA_CLIENT_ID must be the app registration's GUID."),
     ENTRA_CLIENT_SECRET: z.string().min(10, "ENTRA_CLIENT_SECRET is required."),
     APP_BASE_URL: z.string().url("APP_BASE_URL must be the app's public https URL."),
     ENTRA_GROUP_ROLE_MAP: z.string().default("{}"),

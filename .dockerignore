@@ -1,0 +1,17 @@
+node_modules
+.next
+.next-e2e
+.next-e2e-sso
+.env
+.env.*
+!.env.example
+prisma/*.db*
+storage
+storage-e2e
+models
+test-results
+playwright-report
+eval/results
+prototype
+.claude
+.git

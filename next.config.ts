@@ -20,6 +20,8 @@ const csp = [
 const nextConfig: NextConfig = {
   // A separate build folder lets the e2e server run beside your dev server.
   distDir: process.env.NEXT_DIST_DIR || ".next",
+  // The container image builds a standalone server (NEXT_OUTPUT=standalone in the Dockerfile).
+  ...(process.env.NEXT_OUTPUT === "standalone" ? { output: "standalone" as const } : {}),
   poweredByHeader: false,
   // Native, open-source media/AI packages run as plain Node modules on the server (not bundled).
   serverExternalPackages: ["@huggingface/transformers", "onnxruntime-node", "kokoro-js", "sharp", "ffmpeg-static"],

@@ -1,11 +1,14 @@
 // Local test identity provider for the Entra ID sign-in e2e tests. NOT used by the application.
 // oidc-provider (MIT) is a certified OpenID Connect server; here it stands in for Microsoft Entra ID,
 // issuing the same claims the app reads from Entra: oid, tid, email, name, roles.
+import http from "node:http";
 import Provider from "oidc-provider";
 
 export const TEST_TENANT = "11111111-2222-3333-4444-555555555555";
 const OTHER_TENANT = "99999999-8888-7777-6666-555555555555";
-const ISSUER = "http://localhost:3020";
+// Mounted under a tenant-style path, like Entra (".../<tenant>/v2.0"), so the issuer is matched exactly.
+const PREFIX = `/${"11111111-2222-3333-4444-555555555555"}/v2.0`;
+const ISSUER = `http://localhost:3020${PREFIX}`;
 
 const accounts = {
   // Seeded persona, now signing in through company SSO with an app role.
@@ -39,5 +42,10 @@ const provider = new Provider(ISSUER, {
   features: { devInteractions: { enabled: true }, rpInitiatedLogout: { enabled: true, logoutSource: (ctx, form) => { ctx.body = `<!doctype html><html><body>${form}<script>document.forms[0].submit()</script></body></html>`; } } },
   cookies: { keys: ["e2e-only-cookie-key"] },
 });
-provider.proxy = false;
-provider.listen(3020, () => console.log("fake-entra listening on 3020"));
+const handler = provider.callback();
+http.createServer((req, res) => {
+  if (!req.url?.startsWith(PREFIX)) { res.statusCode = 404; res.end(); return; }
+  req.originalUrl = req.url; // tells oidc-provider its mount path, as Express does
+  req.url = req.url.slice(PREFIX.length) || "/";
+  handler(req, res);
+}).listen(3020, () => console.log(`fake-entra listening on ${ISSUER}`));

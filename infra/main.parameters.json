@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "env": { "value": "pilot" },
+    "image": { "value": "<acr-name>.azurecr.io/el-knowledge-studio:<tag>" },
+    "acrName": { "value": "<acr-name>" },
+    "appBaseUrl": { "value": "https://<app-host>" },
+    "entraTenantId": { "value": "<tenant-guid-from-IAM>" },
+    "entraClientId": { "value": "<client-guid-from-IAM>" },
+    "postgresAdminGroupObjectId": { "value": "<entra-group-object-id>" },
+    "postgresAdminGroupName": { "value": "<entra-group-name>" }
+  }
+}
