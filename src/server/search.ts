@@ -1,3 +1,4 @@
+import { takeRate } from "@/lib/utilities/rate-limit";
 import "server-only";
 import { db } from "@/lib/database/client";
 import type { Session } from "@/lib/auth/session";
@@ -44,7 +45,8 @@ export async function searchKnowledge(session: Session, q: string, filters: { fn
   return { terms, results: results.slice(0, 10) };
 }
 
-export async function groundedAnswer(question: string, results: SearchResult[]) {
+export async function groundedAnswer(question: string, results: SearchResult[], userId: string) {
+  if (!takeRate("ai", userId).ok) return { answer: null, sufficient: false, citations: [], error: "RATE_LIMITED" as string | null };
   // With an external provider, only classifications approved for external AI are used as evidence.
   const eligible = aiProviderId() === "openai" ? results.filter((r) => r.classification !== "Highly Confidential") : results;
   const evidence = eligible.slice(0, 5).map((r) => ({ projectId: r.projectId, stepId: r.stepId, text: `${r.projectTitle} · Step ${r.stepOrder + 1}: ${r.stepTitle}\n${r.instruction}${r.warning ? ` Warning: ${r.warning}` : ""}` }));

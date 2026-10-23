@@ -7,7 +7,7 @@ import { MockLabel } from "@/components/common/badges";
 import { useToast } from "@/components/common/toast";
 
 export function PublishForm({ projectId, version, destinations, languages, audience, defaults }: {
-  projectId: string; version: number; destinations: { key: string; label: string; target: string; allowed: boolean }[];
+  projectId: string; version: number; destinations: { key: string; label: string; target: string; allowed: boolean; live: boolean }[];
   languages: { code: string; label: string }[]; audience: string; defaults: string[];
 }) {
   const router = useRouter();
@@ -34,14 +34,14 @@ export function PublishForm({ projectId, version, destinations, languages, audie
 
   return (
     <div className="card pad" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div className="row between"><h2 className="card-h">Publish version {version}</h2><MockLabel>Mock connectors · nothing is sent</MockLabel></div>
+      <div className="row between"><h2 className="card-h">Publish version {version}</h2><MockLabel>{destinations.some((d) => d.live) ? `Simulated except ${destinations.filter((d) => d.live).map((d) => d.label).join(", ")}` : "Mock connectors · nothing is sent"}</MockLabel></div>
       <fieldset style={{ border: 0, margin: 0, padding: 0 }}>
         <legend className="sr">Destinations</legend>
         <div className="checks">
           {destinations.map((d) => (
             <label key={d.key} className="check" style={d.allowed ? undefined : { opacity: 0.55 }}>
               <input type="checkbox" checked={sel.includes(d.key)} disabled={!d.allowed} onChange={() => toggle(d.key)} data-testid={`dest-${d.key}`} />
-              <span>{d.label}<small>{d.allowed ? d.target : "Not allowed for this classification"}</small></span>
+              <span>{d.label}<small>{d.allowed ? `${d.target}${d.live ? " · live" : ""}` : "Not allowed for this classification"}</small></span>
             </label>
           ))}
         </div>

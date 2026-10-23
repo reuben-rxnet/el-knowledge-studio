@@ -63,6 +63,7 @@ interface Props {
   jobs: { id: string; projectId: string; title: string }[];
   personas: { email: string; name: string; label: string }[];
   aiLabel: string;
+  liveConnectors: string[];
 }
 
 export function AppShell(props: Props) {
@@ -108,7 +109,7 @@ export function AppShell(props: Props) {
           <div className="grow" />
           <div className="navsep" />
           <ul className="navlist">{NAV_LOW.map(navItem)}</ul>
-          <div className="demo-note">AI: {props.aiLabel}. Publishing connectors are simulated.</div>
+          <div className="demo-note">AI: {props.aiLabel}. {props.liveConnectors.length ? `Publishing connectors are simulated, except ${props.liveConnectors.join(", ")}.` : "Publishing connectors are simulated."}</div>
         </nav>
         {drawer && <div className="backdrop" style={{ zIndex: 45 }} onClick={() => setDrawer(false)} aria-hidden />}
         <div className="main">

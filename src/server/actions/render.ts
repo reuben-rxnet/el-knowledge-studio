@@ -5,6 +5,7 @@ import { z } from "zod";
 import { db } from "@/lib/database/client";
 import { assertPermission, requireSession } from "@/lib/auth/session";
 import { TTS_LANGUAGES, TTS_VOICES } from "@/lib/services/local/speech";
+import { enforceRate } from "@/lib/utilities/rate-limit";
 import { AppError } from "@/lib/utilities/errors";
 import { recordAudit } from "@/server/audit";
 import { findProject } from "@/server/queries";
@@ -24,6 +25,7 @@ export async function startRender(input: z.input<typeof schema>): Promise<Action
     const s = await requireSession();
     assertPermission(s, "project.edit");
     const v = schema.parse(input);
+    enforceRate("render", s.user.id);
     const p = await findProject(s, v.projectId);
     if (!p) throw new AppError("PROJECT_NOT_FOUND", "The requested project could not be found.");
     if (p.status === "processing") throw new AppError("INVALID_STATE", "Wait for processing to finish before rendering.");

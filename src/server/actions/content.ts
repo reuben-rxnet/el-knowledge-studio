@@ -5,6 +5,7 @@ import { assertPermission, requireSession, type Session } from "@/lib/auth/sessi
 import type { Permission } from "@/lib/permissions";
 import { assertExternalAiAllowed, services } from "@/lib/services/registry";
 import { scriptEditSchema, stepEditSchema } from "@/lib/validation/schemas";
+import { enforceRate } from "@/lib/utilities/rate-limit";
 import { AppError } from "@/lib/utilities/errors";
 import { recordAudit } from "@/server/audit";
 import { findProject } from "@/server/queries";
@@ -70,6 +71,7 @@ export async function rewriteScript(input: { segmentId: string; instruction: "sh
   return run(async () => {
     const s = await requireSession();
     const seg = await segmentProject(input.segmentId);
+    enforceRate("ai", s.user.id);
     const { project, version, newVersion } = await beginEdit(s, seg.projectId, input.expectedVersion);
     // Never silently replace human-approved text.
     if (seg.locked) throw new AppError("INVALID_STATE", "This paragraph is locked as approved text. Unlock it before asking AI to rewrite it.");

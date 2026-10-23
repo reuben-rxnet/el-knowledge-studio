@@ -1,6 +1,7 @@
 import { requirePageSession } from "@/lib/auth/session";
 import { DEMO_PERSONAS, isDemoAuthEnabled } from "@/lib/auth/demo";
 import { db } from "@/lib/database/client";
+import { destinationLabel } from "@/lib/domain/constants";
 import { services } from "@/lib/services/registry";
 import { AppShell, type NavKey } from "@/components/application-shell/app-shell";
 
@@ -36,6 +37,7 @@ export default async function AuthenticatedLayout({ children }: { children: Reac
       jobs={jobs.map((j) => ({ id: j.id, projectId: j.project.id, title: j.project.title }))}
       personas={personas.map((u) => ({ email: u.email, name: u.displayName, label: DEMO_PERSONAS.find((d) => d.email === u.email)?.persona ?? "" }))}
       aiLabel={services.describe().label}
+      liveConnectors={services.liveConnectors().map(destinationLabel)}
     >
       {children}
     </AppShell>

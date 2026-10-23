@@ -1,15 +1,22 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
 import { Readable } from "node:stream";
 import path from "node:path";
+import type { ContainerClient } from "@azure/storage-blob";
 
 /**
- * Local-disk storage adapter for the prototype (production: Azure Blob Storage per data region,
- * private containers, SAS per request). Keys are workspace-prefixed so a key from one workspace
- * can't be used in another, and paths are resolved inside STORAGE_DIR only (no traversal).
+ * File storage for uploads, recordings, screenshots and rendered videos.
+ *   STORAGE_PROVIDER=local       files under STORAGE_DIR (development)
+ *   STORAGE_PROVIDER=azure-blob  a private Blob container. In Azure the app's managed identity
+ *                                authenticates (AZURE_STORAGE_ACCOUNT_URL); locally the Azurite emulator
+ *                                (AZURE_STORAGE_CONNECTION_STRING). Shared keys are disabled in Azure.
+ * Keys are workspace-prefixed ("<workspaceId>/<uuid>-<name>"), so a key from one workspace can't be
+ * used in another, and they are validated before any path or blob name is built from them.
  */
+const provider = () => (process.env.STORAGE_PROVIDER === "azure-blob" ? "azure-blob" : "local");
 const ROOT = path.resolve(/* turbopackIgnore: true */ process.env.STORAGE_DIR ?? path.join(/* turbopackIgnore: true */ process.cwd(), "storage"));
 
 export function storageKeyFor(workspaceId: string, fileName: string) {
@@ -17,38 +24,108 @@ export function storageKeyFor(workspaceId: string, fileName: string) {
   return `${workspaceId}/${randomUUID()}-${safe}`;
 }
 
-function resolveKey(key: string) {
-  if (!/^[\w-]+\/[\w.-]+$/.test(key)) throw new Error("Invalid storage key.");
-  const p = path.resolve(ROOT, key);
+export const keyBelongsTo = (key: string, workspaceId: string) => key.startsWith(`${workspaceId}/`);
+
+function checkKey(key: string) {
+  if (!/^[\w-]+\/[\w.-]+$/.test(key) || key.includes("..")) throw new Error("Invalid storage key.");
+  return key;
+}
+
+function localPath(key: string) {
+  const p = path.resolve(ROOT, checkKey(key));
   if (!p.startsWith(ROOT + path.sep)) throw new Error("Invalid storage key.");
   return p;
 }
 
-export async function saveFile(key: string, data: Buffer) {
-  const p = resolveKey(key);
+// --- Azure Blob ---------------------------------------------------------------------------
+
+let container: Promise<ContainerClient> | null = null;
+function blobContainer(): Promise<ContainerClient> {
+  container ??= (async () => {
+    const { BlobServiceClient } = await import("@azure/storage-blob");
+    const name = process.env.AZURE_STORAGE_CONTAINER?.trim() || "media";
+    const conn = process.env.AZURE_STORAGE_CONNECTION_STRING?.trim();
+    let service;
+    if (conn) {
+      service = BlobServiceClient.fromConnectionString(conn);
+    } else {
+      const url = process.env.AZURE_STORAGE_ACCOUNT_URL?.trim();
+      if (!url) throw new Error("Set AZURE_STORAGE_ACCOUNT_URL (managed identity) or AZURE_STORAGE_CONNECTION_STRING (emulator).");
+      const { DefaultAzureCredential } = await import("@azure/identity");
+      service = new BlobServiceClient(url, new DefaultAzureCredential());
+    }
+    const c = service.getContainerClient(name);
+    // Azure creates the container in infra (Bicep); the emulator needs it created here. Always private.
+    if (conn) await c.createIfNotExists();
+    return c;
+  })().catch((e) => { container = null; throw e; });
+  return container;
+}
+const blob = async (key: string) => { const name = checkKey(key); return (await blobContainer()).getBlockBlobClient(name); };
+const isNotFound = (e: unknown) => !!e && typeof e === "object" && "statusCode" in e && (e as { statusCode: number }).statusCode === 404;
+
+// --- Operations (same behaviour on both providers) ----------------------------------------
+
+export async function saveFile(key: string, data: Buffer, contentType = "application/octet-stream") {
+  if (provider() === "azure-blob") { await (await blob(key)).uploadData(data, { blobHTTPHeaders: { blobContentType: contentType } }); return; }
+  const p = localPath(key);
   await mkdir(path.dirname(p), { recursive: true });
   await writeFile(p, data);
 }
 
-export async function readStoredFile(key: string) {
-  return readFile(resolveKey(key));
+export async function readStoredFile(key: string): Promise<Buffer> {
+  if (provider() === "azure-blob") return (await blob(key)).downloadToBuffer();
+  return readFile(localPath(key));
+}
+
+export async function storedFileSize(key: string): Promise<number | null> {
+  try {
+    if (provider() === "azure-blob") return (await (await blob(key)).getProperties()).contentLength ?? null;
+    const s = await stat(localPath(key));
+    return s.isFile() ? s.size : null;
+  } catch (e) {
+    if (provider() === "azure-blob" && !isNotFound(e)) throw e;
+    return null;
+  }
 }
 
 export async function storedFileExists(key: string) {
-  try { return (await stat(resolveKey(key))).isFile(); } catch { return false; }
+  return (await storedFileSize(key)) !== null;
 }
 
-export const keyBelongsTo = (key: string, workspaceId: string) => key.startsWith(`${workspaceId}/`);
-
-/** Size of a stored file, or null when it doesn't exist. */
-export async function storedFileSize(key: string): Promise<number | null> {
-  try { const s = await stat(resolveKey(key)); return s.isFile() ? s.size : null; } catch { return null; }
+/** A byte range [start, end] as a web stream (HTTP Range requests: seeking in video). */
+export async function streamStoredFile(key: string, start: number, end: number): Promise<ReadableStream<Uint8Array>> {
+  if (provider() === "azure-blob") {
+    const res = await (await blob(key)).download(start, end - start + 1);
+    if (!res.readableStreamBody) throw new Error("Empty blob stream.");
+    return Readable.toWeb(res.readableStreamBody as Readable) as ReadableStream<Uint8Array>;
+  }
+  return Readable.toWeb(createReadStream(localPath(key), { start, end })) as ReadableStream<Uint8Array>;
 }
 
-/** A byte range of a stored file as a web stream (for HTTP Range requests: seeking in video). */
-export function streamStoredFile(key: string, start: number, end: number): ReadableStream<Uint8Array> {
-  return Readable.toWeb(createReadStream(resolveKey(key), { start, end })) as ReadableStream<Uint8Array>;
+/**
+ * Runs `fn` with a real file path, for tools that need one (FFmpeg, Whisper).
+ * Local storage passes the stored file; Blob storage downloads a temporary copy that is deleted after.
+ */
+export async function withLocalFile<T>(key: string, fn: (filePath: string) => Promise<T>): Promise<T> {
+  if (provider() === "local") return fn(localPath(key));
+  const dir = await mkdtemp(path.join(os.tmpdir(), "elks-blob-"));
+  const file = path.join(dir, path.basename(checkKey(key)));
+  try {
+    await (await blob(key)).downloadToFile(file);
+    return await fn(file);
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
-/** Absolute path of a stored file, for tools that need a real file (FFmpeg). Never sent to clients. */
-export const storedFilePath = (key: string) => resolveKey(key);
+/** For the health check: can storage be reached? */
+export async function storageReady(): Promise<boolean> {
+  try {
+    if (provider() === "azure-blob") { await (await blobContainer()).getProperties(); return true; }
+    await mkdir(ROOT, { recursive: true });
+    return true;
+  } catch {
+    return false;
+  }
+}

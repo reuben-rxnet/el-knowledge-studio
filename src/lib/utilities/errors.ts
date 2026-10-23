@@ -9,6 +9,7 @@ export type AppErrorCode =
   | "VERSION_CONFLICT"
   | "INVALID_STATE"
   | "CLASSIFICATION_BLOCKED"
+  | "RATE_LIMITED"
   | "INTERNAL_ERROR";
 
 export interface ApiError {
@@ -48,5 +49,6 @@ export const HTTP_STATUS: Record<AppErrorCode, number> = {
   VERSION_CONFLICT: 409,
   INVALID_STATE: 409,
   CLASSIFICATION_BLOCKED: 403,
+  RATE_LIMITED: 429,
   INTERNAL_ERROR: 500,
 };

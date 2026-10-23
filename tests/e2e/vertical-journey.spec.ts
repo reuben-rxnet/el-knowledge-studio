@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { expect, test } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { signIn, switchPersona } from "./helpers";
@@ -66,13 +68,24 @@ test("Journey 2 — SME approves, approver approves the exact version", async ({
   await expect(page.getByText(/Version 1 was approved/)).toBeVisible();
 });
 
-test("Journey 4 — publisher releases to a clearly labelled mock SharePoint destination", async ({ page }) => {
+test("Journey 4 — publisher releases to a mock SharePoint destination and the real Knowzy export folder", async ({ page }) => {
   await signIn(page, "publisher");
   await page.goto(`${projectUrl}/publishing`);
-  await expect(page.getByText("Mock connectors · nothing is sent")).toBeVisible();
+  // The e2e server sets KNOWZY_EXPORT_DIR, so Knowzy is the one live connector and is labelled as such.
+  await expect(page.getByText("Simulated except Knowzy")).toBeVisible();
+  const knowzy = page.getByTestId("dest-knowzy");
+  if (!(await knowzy.isChecked())) await knowzy.check();
   await page.getByTestId("publish").click();
   await expect(page.getByText(/simulated: no external system was contacted/)).toBeVisible();
   await expect(page.getByRole("heading", { name: "Publishing history" })).toBeVisible();
+
+  const projectId = projectUrl.split("/").pop()!;
+  const dir = path.join("storage-e2e", "knowzy", "retail-europe");
+  const md = await readFile(path.join(dir, `${projectId}.en.md`), "utf8");
+  expect(md).toContain(`# ${TITLE}`);
+  expect(md).toContain("### Step 1.");
+  const meta = JSON.parse(await readFile(path.join(dir, `${projectId}.en.md.meta.json`), "utf8"));
+  expect(meta).toMatchObject({ sourceVersion: "1", mimeType: "text/markdown", metadata: { source: "EL Knowledge Studio", projectId } });
 });
 
 test("Journey 5 — consumer searches, gets a grounded answer and opens the exact chapter", async ({ page }) => {

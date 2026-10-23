@@ -3,7 +3,7 @@ import { db } from "@/lib/database/client";
 import { csv, languageLabel } from "@/lib/domain/constants";
 import { generatedContentSchema, type GeneratedContent } from "@/lib/services/interfaces";
 import { parseStageState, type StageState, type StageStatus } from "@/lib/services/processing-plan";
-import { readStoredFile, storedFilePath } from "@/lib/services/storage";
+import { readStoredFile, withLocalFile } from "@/lib/services/storage";
 import { localSpeechEnabled, localTranscriber } from "@/lib/services/local/speech";
 import { extractDocumentText } from "@/lib/services/extract";
 import { aiProviderId, services } from "@/lib/services/registry";
@@ -84,7 +84,7 @@ export async function runLiveJob(jobId: string) {
         try {
           if (local) await set(["transcribe"], "running", "Transcribing with Whisper on this server (the first run downloads the model)");
           const t = local
-            ? await localTranscriber.transcribeFile(storedFilePath(source.storageKey), p.primaryLanguage)
+            ? await withLocalFile(source.storageKey, (file) => localTranscriber.transcribeFile(file, p.primaryLanguage))
             : await transcriber.transcribe({ file: new Blob([new Uint8Array(await readStoredFile(source.storageKey))], { type: source.mimeType }), fileName: source.fileName, language: p.primaryLanguage });
           // Whisper doesn't know company terms: restore protected names to their exact spelling.
           const terms = [p.sourceSystem, "EssilorLuxottica"].filter(Boolean);

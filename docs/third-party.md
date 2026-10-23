@@ -15,3 +15,11 @@ Measured on the development PC (CPU only):
 - Whisper-base transcribes 5 seconds of speech in about 3 seconds.
 - Each model takes about 11 seconds to load, once per server start.
 - A 30-second narrated video renders in about 45 seconds.
+
+Phase 3 (pilot) adds Microsoft's Azure SDKs, which run in the app:
+
+| Component | Used for | Licence |
+| --- | --- | --- |
+| `@azure/storage-blob`, `@azure/identity` | Blob storage with the app's managed identity | MIT |
+| [Azurite](https://github.com/Azure/Azurite) (development only, Docker) | Local Blob emulator for tests | MIT |
+| [PostgreSQL](https://www.postgresql.org) `postgres:16-alpine` (development only, Docker) | Local production check | PostgreSQL Licence |

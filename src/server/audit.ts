@@ -23,6 +23,7 @@ export type AuditAction =
   | "content.downloaded"
   | "permission.denied"
   | "search.feedback"
+  | "feedback.submitted"
   | "ai.connection.tested"
   | "review.flag.decided"
   | "suggestion.applied"

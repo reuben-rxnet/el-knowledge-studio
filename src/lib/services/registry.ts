@@ -2,6 +2,7 @@ import "server-only";
 import type { Classification } from "@/lib/domain/constants";
 import { AppError } from "@/lib/utilities/errors";
 import type { AudioTranscriptionService, GroundedAnswerService, GuideGenerationService, PublishingConnector, QuizGenerationService, ScriptGenerationService, TextTranslationService } from "./interfaces";
+import { knowzyFileConnector } from "./knowzy";
 import { mockConnectors, mockGroundedAnswer, mockGuideGenerator, mockQuiz, mockScanner, mockScriptService, mockStorage, mockTranscriber, mockTranslator } from "./mock";
 import { openAITranscriber } from "./openai/audio";
 import { loadOpenAIConfig, OpenAIConfigError } from "./openai/config";
@@ -39,9 +40,14 @@ export const services = {
   scanner: mockScanner,
   storage: mockStorage,
   connector(key: string): PublishingConnector | undefined {
+    // Knowzy is real whenever its export folder is configured: it only writes files Knowzy then syncs.
+    const knowzyDir = process.env.KNOWZY_EXPORT_DIR?.trim();
+    if (key === "knowzy" && knowzyDir) return knowzyFileConnector(knowzyDir);
     // Production connectors (Microsoft Graph etc.) are registered here when MOCK_PUBLISHING_CONNECTORS=false.
     return process.env.MOCK_PUBLISHING_CONNECTORS !== "false" ? mockConnectors[key] : undefined;
   },
+  /** Destinations with a real connector in this environment (the rest are simulated or unavailable). */
+  liveConnectors(): string[] { return Object.keys(mockConnectors).filter((k) => services.connector(k)?.simulated === false); },
   /** For labelling the UI honestly. */
   describe() {
     if (aiProviderId() === "mock") return { provider: "mock" as const, label: "Simulated AI (offline)", model: null };

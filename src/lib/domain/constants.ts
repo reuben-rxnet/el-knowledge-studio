@@ -163,3 +163,11 @@ export const FLAG_META: Record<string, { label: string; tone: Tone }> = {
   "missing-info": { label: "Missing information", tone: "warn" },
   contradiction: { label: "Contradiction", tone: "err" },
 };
+
+export const FEEDBACK_CATEGORIES = ["problem", "idea", "question", "praise"] as const;
+export const FEEDBACK_META: Record<(typeof FEEDBACK_CATEGORIES)[number], { label: string; hint: string }> = {
+  problem: { label: "Something's wrong", hint: "An error, wrong result or something confusing" },
+  idea: { label: "Idea", hint: "Something that would make your work easier" },
+  question: { label: "Question", hint: "You're not sure how something works" },
+  praise: { label: "Works well", hint: "Something worth keeping" },
+};

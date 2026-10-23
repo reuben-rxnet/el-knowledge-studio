@@ -9,6 +9,7 @@ import { assertPermission, requireSession } from "@/lib/auth/session";
 import { CLASSIFICATION_POLICY, type Classification } from "@/lib/domain/constants";
 import { assertExternalAiAllowed, services } from "@/lib/services/registry";
 import { createProjectSchema, type CreateProjectInput } from "@/lib/validation/schemas";
+import { enforceRate } from "@/lib/utilities/rate-limit";
 import { AppError } from "@/lib/utilities/errors";
 import { recordAudit } from "@/server/audit";
 import { findProject } from "@/server/queries";
@@ -19,6 +20,7 @@ export async function createProject(input: CreateProjectInput): Promise<ActionRe
     const s = await requireSession();
     assertPermission(s, "project.create");
     const v = createProjectSchema.parse(input);
+    enforceRate("generate", s.user.id);
     const policy = CLASSIFICATION_POLICY[v.classification as Classification];
     if (v.sourceKind === "recording" && !policy.recording) throw new AppError("CLASSIFICATION_BLOCKED", `${v.classification} content can't be recorded.`);
     assertExternalAiAllowed(v.classification);
@@ -101,6 +103,7 @@ export async function retryJob(projectId: string): Promise<ActionResult> {
     if (last && ["running", "queued"].includes(last.status)) throw new AppError("INVALID_STATE", "This project is already processing.");
     // Never regenerate over content that is in review, approved or published.
     if (!["draft", "ai-generated", "creator-review", "changes-requested"].includes(p.status)) throw new AppError("INVALID_STATE", "This version is in review, approved or published. Regenerating would replace reviewed content.");
+    enforceRate("generate", s.user.id);
     const [job] = await db.$transaction([
       db.processingJob.create({ data: { projectId, status: "queued", mode: "live", correlationId: randomUUID(), startedAt: new Date(), attempt: (last?.attempt ?? 0) + 1 } }),
       db.project.update({ where: { id: projectId }, data: { status: "processing" } }),

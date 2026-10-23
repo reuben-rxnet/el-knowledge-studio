@@ -27,7 +27,7 @@ export default async function KnowledgeHub({ searchParams }: { searchParams: Pro
   const query = q.trim().slice(0, 300);
   const fnFilter = BUSINESS_FUNCTIONS.includes(fn as (typeof BUSINESS_FUNCTIONS)[number]) ? fn : undefined;
   const { terms, results } = query ? await searchKnowledge(s, query, { fn: fnFilter }) : { terms: [], results: [] };
-  const answer = query && results.length ? await groundedAnswer(query, results) : null;
+  const answer = query && results.length ? await groundedAnswer(query, results, s.user.id) : null;
   const cited = answer?.sufficient ? answer.citations.map((c) => results.find((r) => r.stepId === c.stepId)).filter((r): r is NonNullable<typeof r> => !!r) : [];
   const ai = services.describe();
 
@@ -80,7 +80,7 @@ export default async function KnowledgeHub({ searchParams }: { searchParams: Pro
                     </div>
                   </>
                 ) : (
-                  <p>{answer.error ? `The answer service is unavailable right now (${answer.error}). The matching content is listed below.` : <>Approved content doesn&apos;t clearly answer <b>“{query}”</b>. Rather than guess, the closest matches are listed below. Ask the content owner, or report the gap.</>}</p>
+                  <p>{answer.error === "RATE_LIMITED" ? "You've asked many questions in a short time, so AI answers are paused for a few minutes. The matching content is listed below." : answer.error ? `The answer service is unavailable right now (${answer.error}). The matching content is listed below.` : <>Approved content doesn&apos;t clearly answer <b>“{query}”</b>. Rather than guess, the closest matches are listed below. Ask the content owner, or report the gap.</>}</p>
                 )}
                 <p className="meta" style={{ margin: "12px 0 8px" }}>AI-generated answer based on approved enterprise knowledge. Verify critical operational, safety, financial, legal, or compliance decisions with the designated content owner.</p>
                 <AnswerFeedback query={query} />

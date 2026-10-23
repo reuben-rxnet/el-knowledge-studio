@@ -40,7 +40,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const buf = Buffer.from(await file.arrayBuffer());
     if (!PNG.every((b, i) => buf[i] === b)) throw new AppError("VALIDATION_FAILED", "Only PNG images are accepted.");
     const key = storageKeyFor(session.workspace.id, `step-${step.id}.png`);
-    await saveFile(key, buf);
+    await saveFile(key, buf, "image/png");
     await db.guideStep.update({ where: { id: step.id }, data: { screenshotKey: key, altText: `Screenshot of step ${step.order + 1}: ${step.title}` } });
     if (step.order === 0) await recordAudit(session, { action: "screenshots.captured", resourceType: "project", resourceId: step.project.id, resourceLabel: step.project.title, resourceVersion: step.project.currentVersion });
     return NextResponse.json({ ok: true });

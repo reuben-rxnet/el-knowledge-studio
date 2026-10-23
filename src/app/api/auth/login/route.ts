@@ -4,6 +4,7 @@ import { isEntraEnabled } from "@/lib/auth/entra-config";
 import { entra } from "@/lib/auth/entra";
 import { sessionSecret } from "@/lib/auth/session-cookie";
 import { createHmac } from "node:crypto";
+import { clientIp, takeRate } from "@/lib/utilities/rate-limit";
 
 export const dynamic = "force-dynamic";
 const OIDC_COOKIE = "elks_oidc";
@@ -11,6 +12,7 @@ const OIDC_COOKIE = "elks_oidc";
 /** Starts Entra ID sign-in: PKCE verifier, state and nonce go in a signed, 10-minute, httpOnly cookie. */
 export async function GET(req: Request) {
   if (!isEntraEnabled()) return NextResponse.redirect(new URL("/sign-in", req.url));
+  if (!takeRate("signIn", clientIp(req)).ok) return NextResponse.redirect(new URL("/sign-in?error=too-many-attempts", req.url));
   try {
     const { cfg, server } = entra();
     const config = await server;

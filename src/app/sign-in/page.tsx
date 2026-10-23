@@ -15,6 +15,7 @@ const SIGN_IN_ERRORS: Record<string, string> = {
   "group-overage": "Your account is in too many groups to read at sign-in. IT needs to send only the groups assigned to this application.",
   expired: "The sign-in took too long or was opened in another tab. Start again.",
   "entra-unavailable": "Microsoft sign-in can't be reached right now. Try again in a few minutes.",
+  "too-many-attempts": "Too many sign-in attempts from this network. Wait a few minutes, then try again.",
   "signin-failed": "Microsoft sign-in didn't complete. Try again; if it keeps happening, contact the service desk.",
 };
 

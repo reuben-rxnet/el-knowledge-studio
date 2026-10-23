@@ -7,7 +7,7 @@ import { db } from "@/lib/database/client";
 import { isMediaSource } from "@/lib/domain/constants";
 import { mediaDurationSec, runFfmpeg } from "@/lib/services/local/ffmpeg";
 import { synthesizeSpeech, TTS_LANGUAGES, type TtsVoice } from "@/lib/services/local/speech";
-import { saveFile, storageKeyFor, storedFilePath } from "@/lib/services/storage";
+import { saveFile, storageKeyFor, withLocalFile } from "@/lib/services/storage";
 
 /**
  * Renders a project version to MP4 with FFmpeg (open source), on this server.
@@ -83,22 +83,23 @@ export async function runRender(jobId: string) {
     if (recording) {
       // 2a. Recording: captions + blur over the real video.
       await progress(job.id, "Rendering the recording with captions and redactions");
-      const input = storedFilePath(source.storageKey);
-      await writeFile(path.join(dir, "captions.srt"), srt(script.map((s, i) => ({ start: s.startSec, end: s.endSec, text: text(i) }))), "utf8");
-      const blurs = scenes.filter((s) => s.redaction).map((s) => `boxblur=20:2:enable='between(t,${s.startSec},${s.endSec})'`);
-      const style = "FontName=Segoe UI,FontSize=20,PrimaryColour=&H00FFFFFF,BackColour=&H80000000,BorderStyle=4,Outline=0,MarginV=28";
-      const vf = [`scale=-2:${H}`, ...blurs, `subtitles=captions.srt:force_style='${style}'`].join(",");
-      const args = ["-i", input];
-      if (useVoice) {
-        script.forEach((_, i) => args.push("-i", `voice-${i}.wav`));
-        const delays = script.map((s, i) => `[${i + 1}:a]adelay=${Math.round(s.startSec * 1000)}|${Math.round(s.startSec * 1000)}[a${i}]`).join(";");
-        const mix = `${script.map((_, i) => `[a${i}]`).join("")}amix=inputs=${script.length}:normalize=0[aout]`;
-        args.push("-filter_complex", `[0:v]${vf}[vout];${delays};${mix}`, "-map", "[vout]", "-map", "[aout]");
-      } else {
-        args.push("-vf", vf, "-map", "0:v:0", "-map", "0:a?");
-      }
-      args.push("-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", "out.mp4");
-      await runFfmpeg(args, { cwd: dir });
+      await withLocalFile(source.storageKey, async (input) => {
+        await writeFile(path.join(dir, "captions.srt"), srt(script.map((s, i) => ({ start: s.startSec, end: s.endSec, text: text(i) }))), "utf8");
+        const blurs = scenes.filter((s) => s.redaction).map((s) => `boxblur=20:2:enable='between(t,${s.startSec},${s.endSec})'`);
+        const style = "FontName=Segoe UI,FontSize=20,PrimaryColour=&H00FFFFFF,BackColour=&H80000000,BorderStyle=4,Outline=0,MarginV=28";
+        const vf = [`scale=-2:${H}`, ...blurs, `subtitles=captions.srt:force_style='${style}'`].join(",");
+        const args = ["-i", input];
+        if (useVoice) {
+          script.forEach((_, i) => args.push("-i", `voice-${i}.wav`));
+          const delays = script.map((s, i) => `[${i + 1}:a]adelay=${Math.round(s.startSec * 1000)}|${Math.round(s.startSec * 1000)}[a${i}]`).join(";");
+          const mix = `${script.map((_, i) => `[a${i}]`).join("")}amix=inputs=${script.length}:normalize=0[aout]`;
+          args.push("-filter_complex", `[0:v]${vf}[vout];${delays};${mix}`, "-map", "[vout]", "-map", "[aout]");
+        } else {
+          args.push("-vf", vf, "-map", "0:v:0", "-map", "0:a?");
+        }
+        args.push("-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", "out.mp4");
+        await runFfmpeg(args, { cwd: dir });
+      });
     } else {
       // 2b. Document: title card + a narrated slide per chapter, then concatenate.
       const parts: string[] = [];
@@ -142,7 +143,7 @@ export async function runRender(jobId: string) {
     await progress(job.id, "Saving the video");
     const buf = await readFile(out);
     const key = storageKeyFor(p.workspaceId, `${p.title.slice(0, 40)}-v${job.version}-${job.language}.mp4`);
-    await saveFile(key, buf);
+    await saveFile(key, buf, "video/mp4");
     const durationSec = Math.round(await mediaDurationSec(out));
     await db.$transaction([
       db.renderJob.update({ where: { id: job.id }, data: { status: "succeeded", detail: "Done", outputKey: key, durationSec, sizeBytes: (await stat(out)).size, completedAt: new Date() } }),

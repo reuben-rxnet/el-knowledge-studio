@@ -7,6 +7,7 @@ import { getProjectOr404 } from "@/server/queries";
 import { MockLabel } from "@/components/common/badges";
 import { EmptyState } from "@/components/common/empty-state";
 import { PublishForm } from "@/components/governance/publish-form";
+import { services } from "@/lib/services/registry";
 
 export default async function PublishingTab({ params }: { params: Promise<{ id: string }> }) {
   const s = await requirePageSession();
@@ -18,6 +19,7 @@ export default async function PublishingTab({ params }: { params: Promise<{ id: 
   ]);
   const policy = CLASSIFICATION_POLICY[p.classification as Classification];
   const canPublish = s.permissions.has("publish.execute");
+  const live = services.liveConnectors();
 
   return (
     <div className="split">
@@ -27,7 +29,7 @@ export default async function PublishingTab({ params }: { params: Promise<{ id: 
         <div className="card"><EmptyState icon={Send} title="Your role can't publish">Version {p.approvedVersion} is approved. A publisher in {s.workspace.name} releases it to SharePoint, Teams and other destinations.</EmptyState></div>
       ) : (
         <PublishForm projectId={p.id} version={p.approvedVersion} audience={p.audience} defaults={csv(p.destinations)}
-          destinations={DESTINATIONS.map((d) => ({ key: d.key, label: d.label, target: d.target, allowed: policy?.destinations.includes(d.key) ?? false }))}
+          destinations={DESTINATIONS.map((d) => ({ key: d.key, label: d.label, target: d.target, allowed: policy?.destinations.includes(d.key) ?? false, live: live.includes(d.key) }))}
           languages={[{ code: p.primaryLanguage, label: languageLabel(p.primaryLanguage) }, ...translations.map((t) => ({ code: t.language, label: languageLabel(t.language) }))]} />
       )}
       <div className="card">
