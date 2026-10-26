@@ -382,3 +382,13 @@ a.link{color:var(--action);font-weight:600}a.link:hover{text-decoration:underlin
 .studio-tidy{display:grid;gap:6px;padding-top:8px;border-top:1px solid var(--border)}
 .studio-inline{position:absolute;inset:0;width:100%;height:100%;border:0;border-radius:6px;background:rgba(7,26,51,.92);color:#fff;text-align:center;font:600 clamp(12px,1.6vw,22px) var(--font);padding:0 8px}
 .studio-inline:focus{outline:2px solid var(--gold)}
+
+/* ---- Corporate endorsement (EssilorLuxottica wordmark, approved asset; see components/common/brand.tsx) ---- */
+.endorse{display:flex;align-items:center;gap:6px;padding:0 16px 14px 54px;color:#fff;font-size:12px;line-height:1}
+.endorse span{opacity:.7}
+.endorse-logo{height:19px;width:auto;display:block}
+.collapsed .endorse{display:none}
+.app-footer{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;max-width:1320px;margin:40px auto 0;padding-top:14px;border-top:1px solid var(--border);color:var(--muted);font-size:12px}
+.app-footer-logo{height:16px;width:auto;color:var(--text-2);display:block}
+.app-footer a{color:var(--text-2);font-weight:600}.app-footer a:hover{color:var(--action);text-decoration:underline}
+.signin-panel .app-footer{margin:24px 0 0;max-width:none}

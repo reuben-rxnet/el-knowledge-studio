@@ -9,7 +9,8 @@ import { PageHeader } from "@/components/common/page-header";
 export const metadata: Metadata = { title: "Brand Center" };
 
 const ASSETS: [string, string, boolean][] = [
-  ["Product mark", "Text placeholder in use. Waiting for an approved corporate asset.", false],
+  ["Corporate logo", "EssilorLuxottica wordmark from the approved asset pack shared with Knowzy, shown as an endorsement (navigation, sign-in, footer). To be confirmed against the corporate brand portal.", true],
+  ["Product mark", "EL Knowledge Studio's own mark (lens and name). Stays the application's identity.", true],
   ["Colour theme", "EL Enterprise · navy, action blue, cyan, gold", true],
   ["Typography", "Segoe UI Variable with Inter and Arial fallbacks", true],
   ["Intro and outro sequences", "Not uploaded yet", false],

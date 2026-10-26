@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { signInAsPersona, signOut, switchWorkspace } from "@/server/actions/auth";
 import { ROLE_LABELS, type Role } from "@/lib/permissions";
+import { AppFooter, EssilorLuxotticaLogo } from "@/components/common/brand";
 import { ToastProvider } from "@/components/common/toast";
 
 export type NavKey = "home" | "create" | "mine" | "library" | "hub" | "reviews" | "translations" | "publishing" | "analytics" | "templates" | "brand" | "admin" | "help" | "feedback" | "audit" | "settings";
@@ -103,8 +104,8 @@ export function AppShell(props: Props) {
       <a className="skip" href="#content">Skip to main content</a>
       <div className={`app${collapsed ? " collapsed" : ""}${drawer ? " drawer" : ""}`}>
         <nav className="nav" aria-label="Primary">
-          {/* PLACEHOLDER PRODUCT MARK: replace with an approved EssilorLuxottica corporate asset before release. */}
           <Link href="/" className="mark" aria-label="EL Knowledge Studio home"><span className="lens" aria-hidden /><b>EL</b><span>| Knowledge Studio</span></Link>
+          <div className="endorse"><span>by</span><EssilorLuxotticaLogo className="endorse-logo" /></div>
           <ul className="navlist">{NAV.map(navItem)}</ul>
           <div className="grow" />
           <div className="navsep" />
@@ -196,6 +197,7 @@ export function AppShell(props: Props) {
           </header>
           <main className="content" id="content" tabIndex={-1} data-roles={props.roles.map((r) => ROLE_LABELS[r as Role] ?? r).join(", ")}>
             {props.children}
+            <AppFooter />
           </main>
         </div>
       </div>

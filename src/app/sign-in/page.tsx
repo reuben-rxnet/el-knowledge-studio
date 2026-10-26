@@ -4,6 +4,7 @@ import { db } from "@/lib/database/client";
 import { DEMO_PERSONAS, isDemoAuthEnabled } from "@/lib/auth/demo";
 import { signInAsPersona } from "@/server/actions/auth";
 import { isEntraEnabled } from "@/lib/auth/entra-config";
+import { AppFooter, EssilorLuxotticaLogo } from "@/components/common/brand";
 import { ROLE_LABELS, type Role } from "@/lib/permissions";
 
 export const metadata: Metadata = { title: "Sign in" };
@@ -27,14 +28,16 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
   return (
     <main className="signin">
       <section className="signin-hero" aria-labelledby="brand">
-        {/* PLACEHOLDER PRODUCT MARK: replace with an approved EssilorLuxottica corporate asset. */}
-        <div className="mark" style={{ padding: 0 }}><span className="lens" aria-hidden /><b>EL</b><span>| Knowledge Studio</span></div>
+        <div style={{ display: "grid", gap: 6 }}>
+          <div className="mark" style={{ padding: 0 }}><span className="lens" aria-hidden /><b>EL</b><span>| Knowledge Studio</span></div>
+          <div className="endorse" style={{ padding: 0 }}><span>by</span><EssilorLuxotticaLogo className="endorse-logo" /></div>
+        </div>
         <div>
           <p className="tag">Capture once. Share knowledge everywhere.</p>
           <h1 id="brand">Turn everyday expertise into enterprise knowledge</h1>
           <p className="lead">Transform business processes into videos, guides, training content and searchable knowledge with enterprise AI.</p>
         </div>
-        <p className="meta" style={{ color: "#9fb3cc" }}>Fictional demo data · EssilorLuxottica internal prototype</p>
+        <p className="meta" style={{ color: "#9fb3cc" }}>Fictional demo data · internal prototype</p>
       </section>
 
       <section className="signin-panel" aria-labelledby="signin-h">
@@ -77,6 +80,8 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
               : <p className="meta" style={{ margin: 0 }}>Company sign-in (Microsoft Entra ID) isn&apos;t configured in this environment yet. See docs/iam-registration.md.</p>}
           </div>
         )}
+        <div className="spacer" />
+        <AppFooter />
       </section>
     </main>
   );
