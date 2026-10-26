@@ -1,9 +1,10 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { createReadStream, createWriteStream } from "node:fs";
+import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import path from "node:path";
 import type { ContainerClient } from "@azure/storage-blob";
 
@@ -71,6 +72,39 @@ export async function saveFile(key: string, data: Buffer, contentType = "applica
   const p = localPath(key);
   await mkdir(path.dirname(p), { recursive: true });
   await writeFile(p, data);
+}
+
+/**
+ * Stores a stream without holding it in memory (uploads up to the per-type limit, e.g. 1 GB of video).
+ * Local: written under a temporary name and renamed once complete. Blob: block upload in 8 MB pieces.
+ * If the stream fails (too large, connection dropped) nothing is left behind.
+ */
+export async function saveStream(key: string, data: Readable, contentType = "application/octet-stream") {
+  if (provider() === "azure-blob") {
+    const b = await blob(key);
+    try {
+      await b.uploadStream(data, 8 * 1024 * 1024, 4, { blobHTTPHeaders: { blobContentType: contentType } });
+    } catch (e) {
+      await b.deleteIfExists().catch(() => {});
+      throw e;
+    }
+    return;
+  }
+  const p = localPath(key);
+  await mkdir(path.dirname(p), { recursive: true });
+  const partial = `${p}.partial`;
+  try {
+    await pipeline(data, createWriteStream(partial));
+    await rename(partial, p);
+  } catch (e) {
+    await rm(partial, { force: true }).catch(() => {});
+    throw e;
+  }
+}
+
+export async function deleteStoredFile(key: string) {
+  if (provider() === "azure-blob") { await (await blob(key)).deleteIfExists(); return; }
+  await rm(localPath(key), { force: true });
 }
 
 export async function readStoredFile(key: string): Promise<Buffer> {

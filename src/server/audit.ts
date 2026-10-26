@@ -24,6 +24,8 @@ export type AuditAction =
   | "permission.denied"
   | "search.feedback"
   | "feedback.submitted"
+  | "settings.changed"
+  | "source.edited"
   | "ai.connection.tested"
   | "review.flag.decided"
   | "suggestion.applied"

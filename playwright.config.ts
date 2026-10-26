@@ -26,7 +26,7 @@ export default defineConfig({
     {
       command: `${freshDb("e2e.db")} && npx next dev -p ${PORT}`,
       url: `http://localhost:${PORT}/sign-in`, reuseExistingServer: false, timeout: 180_000,
-      env: { AI_PROVIDER: "mock", SPEECH_PROVIDER: "off", NEXT_DIST_DIR: ".next-e2e", DATABASE_URL: "file:./e2e.db", STORAGE_DIR: "./storage-e2e", KNOWZY_EXPORT_DIR: "./storage-e2e/knowzy" },
+      env: { AI_PROVIDER: "mock", SPEECH_PROVIDER: "off", NEXT_DIST_DIR: ".next-e2e", DATABASE_URL: "file:./e2e.db", STORAGE_DIR: "./storage-e2e", KNOWZY_EXPORT_DIR: "./storage-e2e/knowzy", RATE_LIMITS: "off" },
     },
     { command: "node tests/e2e/fake-entra.mjs", url: "http://localhost:3020/11111111-2222-3333-4444-555555555555/v2.0/.well-known/openid-configuration", reuseExistingServer: false, timeout: 60_000 },
     {

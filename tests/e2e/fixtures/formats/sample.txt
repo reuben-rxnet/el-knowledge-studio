@@ -1,0 +1,4 @@
+Store closing procedure
+1. Open Store Portal and select Close Day.
+2. Count the cash drawer and enter the total.
+3. Lock the safe and confirm the closing.

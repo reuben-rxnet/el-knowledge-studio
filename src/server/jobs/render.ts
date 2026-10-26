@@ -7,14 +7,17 @@ import { db } from "@/lib/database/client";
 import { isMediaSource } from "@/lib/domain/constants";
 import { mediaDurationSec, runFfmpeg } from "@/lib/services/local/ffmpeg";
 import { synthesizeSpeech, TTS_LANGUAGES, type TtsVoice } from "@/lib/services/local/speech";
-import { saveFile, storageKeyFor, withLocalFile } from "@/lib/services/storage";
+import { pagesForScenes } from "@/lib/services/local/slides";
+import { readStoredFile, saveFile, storageKeyFor, withLocalFile } from "@/lib/services/storage";
+import { ensurePageImages } from "./page-images";
 
 /**
  * Renders a project version to MP4 with FFmpeg (open source), on this server.
  *   Recording projects: the original video, captions burned in, redacted scenes blurred, and
  *     optionally an AI narration track (Kokoro, English) instead of the original audio.
  *   Document projects: a title card + one slide per chapter, each narrated (AI voice) or timed
- *     to reading speed, with a soft captions track.
+ *     to reading speed, with a soft captions track. A chapter shows its real page or slide image
+ *     (the page its guide step cites) when the document has page images; otherwise a text slide.
  * FFmpeg runs in a private temp folder with relative file names, and all text reaches it through
  * files (textfile=, .srt), never through the command line.
  */
@@ -88,15 +91,23 @@ export async function runRender(jobId: string) {
         const blurs = scenes.filter((s) => s.redaction).map((s) => `boxblur=20:2:enable='between(t,${s.startSec},${s.endSec})'`);
         const style = "FontName=Segoe UI,FontSize=20,PrimaryColour=&H00FFFFFF,BackColour=&H80000000,BorderStyle=4,Outline=0,MarginV=28";
         const vf = [`scale=-2:${H}`, ...blurs, `subtitles=captions.srt:force_style='${style}'`].join(",");
-        const args = ["-i", input];
+        // Audio only (MP3, WAV): the picture is a plain branded background for the captions; the audio
+        // is input 1 and the video ends with it. Otherwise the recording is input 0 for both.
+        const audioOnly = source.kind === "audio";
+        const args = audioOnly ? ["-f", "lavfi", "-i", `color=c=0x0B2D5B:s=${W}x${H}:r=30`, "-i", input] : ["-i", input];
+        const original = audioOnly ? "1:a" : "0:a";
+        const first = audioOnly ? 2 : 1; // index of the first narration clip
         if (useVoice) {
           script.forEach((_, i) => args.push("-i", `voice-${i}.wav`));
-          const delays = script.map((s, i) => `[${i + 1}:a]adelay=${Math.round(s.startSec * 1000)}|${Math.round(s.startSec * 1000)}[a${i}]`).join(";");
+          const delays = script.map((s, i) => `[${i + first}:a]adelay=${Math.round(s.startSec * 1000)}|${Math.round(s.startSec * 1000)}[a${i}]`).join(";");
           const mix = `${script.map((_, i) => `[a${i}]`).join("")}amix=inputs=${script.length}:normalize=0[aout]`;
           args.push("-filter_complex", `[0:v]${vf}[vout];${delays};${mix}`, "-map", "[vout]", "-map", "[aout]");
+          // The AI voice replaces the original audio, so the clip length follows the original.
+          if (audioOnly) args.push("-t", String(Math.max(1, Math.ceil(await mediaDurationSec(input)))));
         } else {
-          args.push("-vf", vf, "-map", "0:v:0", "-map", "0:a?");
+          args.push("-vf", vf, "-map", "0:v:0", "-map", `${original}?`);
         }
+        if (audioOnly) args.push("-shortest"); // the background is endless; stop with the audio
         args.push("-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", "out.mp4");
         await runFfmpeg(args, { cwd: dir });
       });
@@ -114,6 +125,23 @@ export async function runRender(jobId: string) {
         await runFfmpeg(args, { cwd: dir });
         parts.push(name);
       };
+      // The real pages, when this server can make them (PDF always; PPTX/DOCX with LibreOffice).
+      const pageKeys = source ? await ensurePageImages(source.id).catch(() => [] as string[]) : [];
+      const refs = (await db.guideStep.findMany({ where: { projectId: p.id }, orderBy: { order: "asc" }, select: { sourceRef: true } })).map((x) => x.sourceRef);
+      const scenePage = pagesForScenes(scenes.length, refs, pageKeys.length);
+      const written = new Set<number>();
+      const pageFile = async (n: number) => {
+        if (!written.has(n)) { await writeFile(path.join(dir, `page-${n}.png`), await readStoredFile(pageKeys[n]!)); written.add(n); }
+        return `page-${n}.png`;
+      };
+      const imageSlide = async (name: string, seconds: number, image: string, audio?: string) => {
+        const args = ["-loop", "1", "-framerate", "30", "-t", seconds.toFixed(2), "-i", image];
+        args.push(...(audio ? ["-i", audio] : ["-f", "lavfi", "-t", seconds.toFixed(2), "-i", "anullsrc=r=24000:cl=mono"]));
+        args.push("-vf", `scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=white,format=yuv420p`, "-af", `apad=whole_dur=${seconds.toFixed(2)}`, "-t", seconds.toFixed(2),
+          "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-r", "30", "-c:a", "aac", "-ar", "24000", "-ac", "1", name);
+        await runFfmpeg(args, { cwd: dir });
+        parts.push(name);
+      };
       await progress(job.id, "Rendering the title card");
       await writeFile(path.join(dir, "t-title.txt"), wrap(p.title, 34, 3), "utf8");
       await writeFile(path.join(dir, "t-sub.txt"), "EL Knowledge Studio", "utf8");
@@ -126,7 +154,9 @@ export async function runRender(jobId: string) {
         await writeFile(path.join(dir, `c-${i}-n.txt`), `Step ${i + 1} of ${scenes.length}`, "utf8");
         await writeFile(path.join(dir, `c-${i}-t.txt`), wrap(sc.title, 40, 2), "utf8");
         await writeFile(path.join(dir, `c-${i}-b.txt`), wrap(body, 58, 8), "utf8");
-        await slide(`part-${String(i + 1).padStart(3, "0")}.mp4`, seconds, [
+        const page = scenePage[i];
+        if (page !== null && page !== undefined) await imageSlide(`part-${String(i + 1).padStart(3, "0")}.mp4`, seconds, await pageFile(page), useVoice ? `voice-${Math.min(i, clipSec.length - 1)}.wav` : undefined);
+        else await slide(`part-${String(i + 1).padStart(3, "0")}.mp4`, seconds, [
           { file: `c-${i}-n.txt`, size: 24, y: "90", color: "0x00A6CE" },
           { file: `c-${i}-t.txt`, size: 44, y: "140", bold: true, color: "white" },
           { file: `c-${i}-b.txt`, size: 30, y: "290", color: "0xDCE3EA" },

@@ -93,6 +93,9 @@ model Project {
   approvedVersion  Int?
   publishedVersion Int?
   durationSec      Int       @default(0)
+  partGroup        String?   // shared by the projects made from the parts of one split upload
+  partNumber       Int?
+  partCount        Int?
   views            Int       @default(0)
   hue              Int       @default(205) // thumbnail tint
   articleSummary   String?
@@ -126,6 +129,8 @@ model Project {
   @@index([workspaceId, status])
   @@index([workspaceId, updatedAt])
   @@index([ownerId])
+
+  @@index([partGroup])
 }
 
 model ProjectVersion {
@@ -154,6 +159,7 @@ model SourceAsset {
   storageKey  String   // region-aware storage key (local disk adapter in the prototype)
   storedBytes Boolean  @default(false) // true when the file itself is stored (not only metadata)
   extractedText String? // text from documents or the transcript, used as AI source material
+  pageImages  String? // JSON array of storage keys, one PNG per page or slide (documents and presentations)
   createdAt   DateTime @default(now())
   createdById String
   project     Project  @relation(fields: [projectId], references: [id])
@@ -465,4 +471,12 @@ model FeedbackItem {
   createdAt DateTime @default(now())
 
   @@index([workspaceId, createdAt])
+}
+
+/// Platform settings edited on the Administration page (e.g. upload limits). Changes are audited.
+model AppSetting {
+  key         String   @id
+  value       String   // JSON
+  updatedAt   DateTime @updatedAt
+  updatedById String?
 }

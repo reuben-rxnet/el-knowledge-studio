@@ -24,21 +24,24 @@ export function mediaDuration(file: Blob, kind: "video" | "audio"): Promise<numb
   });
 }
 
-export interface StoredUpload { storageKey: string; fileName: string; mimeType: string; sizeBytes: number; checksum: string }
+export interface StoredUpload { storageKey: string; fileName: string; mimeType: string; sizeBytes: number; checksum: string; durationSec?: number }
 
-/** Sends the file to the workspace's storage (POST /api/uploads) with progress. */
+/**
+ * Sends the file to the workspace's storage (POST /api/uploads) with progress. The file itself is the
+ * request body (no form), so the server can stream it to storage at any size.
+ */
 export function uploadToStorage(file: Blob, fileName: string, onProgress: (fraction: number) => void, signal?: AbortSignal): Promise<StoredUpload> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/api/uploads");
+    xhr.setRequestHeader("x-file-name", encodeURIComponent(fileName));
+    xhr.setRequestHeader("content-type", file.type || "application/octet-stream");
     xhr.responseType = "json";
     xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
     xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve(xhr.response as StoredUpload) : reject(new Error((xhr.response as { message?: string } | null)?.message ?? `Upload failed (${xhr.status}).`)));
     xhr.onerror = () => reject(new Error("The upload was interrupted. Check your connection and try again."));
     xhr.onabort = () => reject(new DOMException("Upload cancelled", "AbortError"));
     signal?.addEventListener("abort", () => xhr.abort());
-    const form = new FormData();
-    form.set("file", file, fileName);
-    xhr.send(form);
+    xhr.send(file);
   });
 }

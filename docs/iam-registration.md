@@ -26,6 +26,8 @@ Hand this to the IAM / Entra ID team. Everything the application needs is listed
 
 Microsoft Graph **delegated**: `openid`, `profile`, `email`, `User.Read`. These are standard sign-in scopes, with no application permissions and no admin-only scopes. Phase 3 publishing to SharePoint, Teams or Stream will be a **separate** request (app-only `Sites.Selected` or delegated), so sign-in isn't blocked by it.
 
+**Planned second request: document conversion through Microsoft 365.** Presentation and document videos show the real slides. In production, the app would upload the file to one dedicated SharePoint site in the EssilorLuxottica tenant and ask Microsoft Graph for a PDF (`GET /drives/{drive}/items/{item}/content?format=pdf`). Office renders it there, so company templates and fonts look exactly as in PowerPoint, and the file never leaves the tenant. This needs the app-only permission **`Sites.Selected`**, granted on that one site only (write access, to upload and delete the temporary copy). It is not needed for sign-in. Until it is granted, the server uses LibreOffice.
+
 ## 4. Who gets access: app roles (recommended)
 
 - Set **Assignment required = Yes** on the enterprise application, so only assigned people can sign in.

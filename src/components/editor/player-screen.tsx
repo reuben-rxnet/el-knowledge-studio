@@ -1,5 +1,13 @@
-/** Stylised video frame used as a preview until the render pipeline produces real frames. */
-export function PlayerScreen({ scene, index, caption }: { scene: { title: string; focusZoom: boolean; redaction: boolean }; index: number; caption: string | null }) {
+/** The preview frame: the chapter's real page or slide when there is one, else a stylised screen. */
+export function PlayerScreen({ scene, index, caption, image = null }: { scene: { title: string; focusZoom: boolean; redaction: boolean }; index: number; caption: string | null; image?: string | null }) {
+  if (image) return (
+    <>
+      {/* eslint-disable-next-line @next/next/no-img-element -- an authorized API image, not a static asset */}
+      <img className="slide" src={image} alt="" />
+      <span className="chap">{scene.title}</span>
+      {caption && <span className="cap">{caption.slice(0, 120)}</span>}
+    </>
+  );
   return (
     <>
       <div className="screen" aria-hidden>

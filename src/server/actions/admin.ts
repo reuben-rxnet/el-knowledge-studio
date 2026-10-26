@@ -1,9 +1,12 @@
 "use server";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { assertPermission, requireSession } from "@/lib/auth/session";
 import { callStructured, OpenAIError } from "@/lib/services/openai/client";
 import { aiProviderId } from "@/lib/services/registry";
 import { recordAudit } from "@/server/audit";
+import { getUploadLimits, storeUploadLimits, uploadCeilingMb } from "@/server/settings";
+import { CATEGORY_META, UPLOAD_CATEGORIES, formatLimit, type UploadCategory, type UploadLimits } from "@/lib/validation/upload-limits";
 import { run, type ActionResult } from "./result";
 
 export interface ConnectionResult { ok: boolean; provider: string; model?: string; ms?: number; code?: string; message: string }
@@ -35,5 +38,26 @@ export async function testAiConnection(): Promise<ActionResult<ConnectionResult>
     }
     await recordAudit(s, { action: "ai.connection.tested", resourceType: "ai-provider", resourceId: "openai", resourceLabel: result.ok ? `Connection OK (${result.model})` : `Connection failed (${result.code})`, outcome: result.ok ? "success" : "failure" });
     return result;
+  });
+}
+
+/** Saves the upload limits (MB per file type). Platform administrators only, capped at UPLOAD_CEILING_MB, audited. */
+export async function saveUploadLimits(input: Record<string, number>): Promise<ActionResult<UploadLimits>> {
+  return run(async () => {
+    const s = await requireSession();
+    assertPermission(s, "enterprise.manage");
+    const ceiling = uploadCeilingMb();
+    const mb = z.coerce.number().int("Use whole megabytes.").min(1, "At least 1 MB.").max(ceiling, `At most ${ceiling} MB (the ceiling set for this environment).`);
+    const v = z.object(Object.fromEntries(UPLOAD_CATEGORIES.map((c) => [c, mb])) as Record<UploadCategory, typeof mb>).parse(input);
+    const before = await getUploadLimits();
+    const changed = UPLOAD_CATEGORIES.filter((c) => before[c] !== v[c]);
+    if (!changed.length) return before;
+    await storeUploadLimits(v, s.user.id);
+    // The label records exactly what changed, e.g. "Video 1 GB → 2 GB; Audio 500 MB → 300 MB".
+    const label = changed.map((c) => `${CATEGORY_META[c].label} ${formatLimit(before[c])} → ${formatLimit(v[c])}`).join("; ");
+    await recordAudit(s, { action: "settings.changed", resourceType: "setting", resourceId: "upload.limits", resourceLabel: `Upload limits: ${label}` });
+    revalidatePath("/admin");
+    revalidatePath("/create/upload");
+    return v;
   });
 }

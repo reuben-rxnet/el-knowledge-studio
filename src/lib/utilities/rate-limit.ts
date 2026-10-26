@@ -21,6 +21,8 @@ const hits = new Map<string, number[]>();
 
 /** Records one use and reports whether it was allowed, without throwing. */
 export function takeRate(bucket: RateBucket, id: string, now = Date.now()): { ok: true } | { ok: false; retryAfterSec: number } {
+  // Test servers only (the e2e suite renders more than a person would in an hour); ignored in production.
+  if (process.env.RATE_LIMITS === "off" && process.env.NODE_ENV !== "production") return { ok: true };
   const { limit, windowSec } = LIMITS[bucket];
   const key = `${bucket}:${id}`;
   const since = now - windowSec * 1000;

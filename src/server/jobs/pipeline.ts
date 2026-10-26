@@ -4,6 +4,8 @@ import { csv, languageLabel } from "@/lib/domain/constants";
 import { generatedContentSchema, type GeneratedContent } from "@/lib/services/interfaces";
 import { parseStageState, type StageState, type StageStatus } from "@/lib/services/processing-plan";
 import { readStoredFile, withLocalFile } from "@/lib/services/storage";
+import { pageImageSupport } from "@/lib/services/local/slides";
+import { ensurePageImages } from "./page-images";
 import { localSpeechEnabled, localTranscriber } from "@/lib/services/local/speech";
 import { extractDocumentText } from "@/lib/services/extract";
 import { aiProviderId, services } from "@/lib/services/registry";
@@ -70,7 +72,13 @@ export async function runLiveJob(jobId: string) {
           await set(["extract"], "succeeded", `${text.length.toLocaleString()} characters of text extracted from ${source.fileName}`);
         } else await set(["extract"], "skipped", "No readable text found in the file. The creator's notes are used instead");
       } else await set(["extract"], isMedia ? "succeeded" : "skipped", isMedia ? "Audio track prepared for transcription" : "No file to read. The creator's notes are used");
-      await set(["detect-scenes"], "skipped", "Visual scene detection needs Azure AI Video Indexer. Chapters come from the narration and steps instead");
+      if (source?.storedBytes && !isMedia) {
+        // Documents and presentations: the real pages become the video's frames.
+        const support = pageImageSupport(source.fileName);
+        const pages = support.ok ? await ensurePageImages(source.id).catch(() => null) : [];
+        if (pages?.length) await set(["detect-scenes"], "succeeded", `${pages.length} ${source.kind === "presentation" ? "slide" : "page"} image${pages.length === 1 ? "" : "s"} made for the video`);
+        else await set(["detect-scenes"], "skipped", support.ok ? "The pages couldn't be turned into images. The video uses text slides instead" : `${support.reason} The video uses text slides instead`);
+      } else await set(["detect-scenes"], "skipped", "Visual scene detection needs Azure AI Video Indexer. Chapters come from the narration and steps instead");
     }
     if (!done("transcribe")) {
       await set(["transcribe"], "running");

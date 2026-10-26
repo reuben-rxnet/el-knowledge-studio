@@ -36,6 +36,7 @@ export async function createProject(input: CreateProjectInput): Promise<ActionRe
           primaryLanguage: v.primaryLanguage, targetLanguages: v.targetLanguages.join(","), destinations: v.destinations.join(","), outputs: v.outputs.join(","),
           templateKey: v.templateKey, sourceKind: v.sourceKind, status: "processing", ownerId: s.user.id, smeName: v.smeName || null, approverName: v.approverName || null,
           reviewFrequencyDays: v.reviewFrequencyDays, nextReviewAt: new Date(Date.now() + v.reviewFrequencyDays * 86_400_000),
+          partGroup: v.part?.group ?? null, partNumber: v.part?.number ?? null, partCount: v.part?.count ?? null,
           durationSec: v.upload?.durationSec ?? 0, hue: 180 + Math.floor(Math.random() * 80), createdById: s.user.id, updatedById: s.user.id,
         },
       });

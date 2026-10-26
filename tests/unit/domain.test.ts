@@ -4,6 +4,7 @@ import { isDemoAuthEnabled } from "@/lib/auth/demo";
 import { CLASSIFICATION_POLICY, freshnessOf } from "@/lib/domain/constants";
 import { snapshotJob, STAGES } from "@/lib/services/processing-plan";
 import { createProjectSchema, decisionSchema, validateUpload } from "@/lib/validation/schemas";
+import { DEFAULT_UPLOAD_LIMITS, normaliseLimits } from "@/lib/validation/upload-limits";
 import { generatedContentSchema } from "@/lib/services/interfaces";
 import { mockGroundedAnswer, mockGuideGenerator, mockScriptService } from "@/lib/services/mock";
 
@@ -77,7 +78,13 @@ describe("validation", () => {
     expect(validateUpload({ name: "a.exe", type: "", size: 10 })).toMatchObject({ ok: false, code: "UNSUPPORTED_TYPE" });
     expect(validateUpload({ name: "a.mp4", type: "application/pdf", size: 10 })).toMatchObject({ ok: false, code: "TYPE_MISMATCH" });
     expect(validateUpload({ name: "a.pdf", type: "application/pdf", size: 0 })).toMatchObject({ ok: false, code: "EMPTY_FILE" });
-    expect(validateUpload({ name: "a.pdf", type: "application/pdf", size: 11 }, 10)).toMatchObject({ ok: false, code: "TOO_LARGE" });
+    // Limits are per type (MB): a PDF at its limit passes, one byte over fails; a video may be far bigger.
+    const limits = { ...DEFAULT_UPLOAD_LIMITS, pdf: 1 };
+    expect(validateUpload({ name: "a.pdf", type: "application/pdf", size: 1024 * 1024 }, limits).ok).toBe(true);
+    expect(validateUpload({ name: "a.pdf", type: "application/pdf", size: 1024 * 1024 + 1 }, limits)).toMatchObject({ ok: false, code: "TOO_LARGE", message: expect.stringContaining("PDF files can be up to 1 MB") });
+    expect(validateUpload({ name: "a.mp4", type: "video/mp4", size: 900 * 1024 * 1024 }, limits).ok).toBe(true);
+    expect(validateUpload({ name: "a.mp4", type: "video/mp4", size: 1025 * 1024 * 1024 }, limits)).toMatchObject({ ok: false, code: "TOO_LARGE", message: expect.stringContaining("Video files can be up to 1 GB") });
+    expect(normaliseLimits({ video: 5000, audio: "x", pdf: 0.5 }, 2048)).toMatchObject({ video: 2048, audio: 500, pdf: 200 }); // capped; bad values fall back
   });
   it("blocks external sharing destinations by classification", () => {
     expect(CLASSIFICATION_POLICY["Highly Confidential"].destinations).toEqual(["sharepoint"]);

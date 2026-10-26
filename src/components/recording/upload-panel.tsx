@@ -3,6 +3,8 @@ import Link from "next/link";
 import { useRef, useState } from "react";
 import { CheckCircle2, Clock3, Upload, XCircle } from "lucide-react";
 import { validateUpload } from "@/lib/validation/schemas";
+import { CATEGORY_META, UPLOAD_CATEGORIES, formatLimit, type UploadLimits } from "@/lib/validation/upload-limits";
+import { TrimSplit } from "./trim-split";
 import { checkDuplicate } from "@/server/actions/projects";
 import { CreationWizard, type UploadMeta } from "@/components/content/creation-wizard";
 import type { SourceKind } from "@/lib/domain/constants";
@@ -11,12 +13,16 @@ import { fingerprint, mediaDuration, uploadToStorage } from "./file-checks";
 type CheckState = "waiting" | "running" | "passed" | "failed";
 const CHECKS = ["Extension and type", "Size limit", "Integrity", "Duplicate check", "Upload", "Security scan"] as const;
 
-export function UploadPanel({ owner, aiLabel, maxBytes, preferredKind }: { owner: string; aiLabel: string; maxBytes: number; preferredKind?: string }) {
+export function UploadPanel({ owner, aiLabel, limits, preferredKind }: { owner: string; aiLabel: string; limits: UploadLimits; preferredKind?: string }) {
   const [file, setFile] = useState<File | null>(null);
   const [checks, setChecks] = useState<Record<string, CheckState>>({});
   const [error, setError] = useState<{ title: string; body: string } | null>(null);
   const [duplicate, setDuplicate] = useState<{ id: string; title: string } | null>(null);
   const [meta, setMeta] = useState<UploadMeta | null>(null);
+  // What the project(s) will be made from: the upload itself, its trimmed copy, or its parts.
+  const [parts, setParts] = useState<UploadMeta[]>([]);
+  const [cutPending, setCutPending] = useState(false);
+  const [mediaKind, setMediaKind] = useState<"video" | "audio" | null>(null);
   const [kind, setKind] = useState<SourceKind>("video");
   const [over, setOver] = useState(false);
   const [ready, setReady] = useState(false);
@@ -28,9 +34,10 @@ export function UploadPanel({ owner, aiLabel, maxBytes, preferredKind }: { owner
 
   async function handle(f: File) {
     cancelled.current = false;
-    setFile(f); setError(null); setDuplicate(null); setMeta(null); setReady(false); setChecks({});
+    setFile(f); setError(null); setDuplicate(null); setMeta(null); setParts([]); setCutPending(false); setReady(false); setChecks({});
     mark("Extension and type", "running");
-    const check = validateUpload({ name: f.name, type: f.type, size: f.size }, maxBytes);
+    const check = validateUpload({ name: f.name, type: f.type, size: f.size }, limits);
+    setMediaKind(check.ok && (check.kind === "video" || check.kind === "audio") ? check.kind : null);
     if (!check.ok) {
       mark(check.code === "TOO_LARGE" || check.code === "EMPTY_FILE" ? "Size limit" : "Extension and type", "failed");
       setError({ title: "This file can't be used.", body: check.message });
@@ -63,12 +70,14 @@ export function UploadPanel({ owner, aiLabel, maxBytes, preferredKind }: { owner
       return;
     }
     mark("Upload", "passed"); mark("Security scan", "passed");
-    setMeta({ fileName: f.name, mimeType: stored.mimeType, sizeBytes: f.size, checksum: stored.checksum, durationSec, storageKey: stored.storageKey });
+    const uploaded = { fileName: f.name, mimeType: stored.mimeType, sizeBytes: f.size, checksum: stored.checksum, durationSec, storageKey: stored.storageKey };
+    setMeta(uploaded);
+    setParts([uploaded]);
   }
 
   function cancel() { cancelled.current = true; abort.current?.abort(); setFile(null); setChecks({}); setError({ title: "Upload cancelled.", body: "Nothing was used. Choose the file again to retry." }); }
 
-  if (ready && meta) return <CreationWizard owner={owner} initialSource={kind} upload={meta} aiLabel={aiLabel} />;
+  if (ready && meta && parts.length) return <CreationWizard owner={owner} initialSource={kind} upload={parts[0]} parts={parts} aiLabel={aiLabel} />;
 
   const icon = (st: CheckState | undefined) => st === "passed" ? <CheckCircle2 size={16} color="var(--success)" aria-hidden /> : st === "failed" ? <XCircle size={16} color="var(--error)" aria-hidden /> : <Clock3 size={16} aria-hidden />;
   const done = Object.values(checks).filter((x) => x === "passed").length;
@@ -80,7 +89,7 @@ export function UploadPanel({ owner, aiLabel, maxBytes, preferredKind }: { owner
         onDrop={(e) => { e.preventDefault(); setOver(false); const f = e.dataTransfer.files[0]; if (f) void handle(f); }}>
         <Upload size={28} aria-hidden />
         <span className="card-h">Drop a file here or choose one</span>
-        <span className="meta">MP4, MOV, WEBM, MP3, WAV, PPTX, DOCX, PDF, TXT, PNG or JPG · up to {Math.round(maxBytes / 1048576)} MB</span>
+        <span className="meta" style={{ textAlign: "center" }}>{UPLOAD_CATEGORIES.map((c) => `${CATEGORY_META[c].types} up to ${formatLimit(limits[c])}`).join(" · ")}</span>
         <span className="btn sm">Choose file</span>
         <input id="file" type="file" className="sr" accept=".mp4,.mov,.webm,.mp3,.wav,.pptx,.docx,.pdf,.txt,.png,.jpg,.jpeg" onChange={(e) => { const f = e.target.files?.[0]; if (f) void handle(f); e.target.value = ""; }} />
       </label>
@@ -97,7 +106,11 @@ export function UploadPanel({ owner, aiLabel, maxBytes, preferredKind }: { owner
           </ul>
           {duplicate && <div className="callout tip" style={{ marginTop: 8 }}><b>Already uploaded.</b>&nbsp;This file matches <Link className="link" href={`/projects/${duplicate.id}`}>{duplicate.title}</Link>. You can still continue to create a separate project.</div>}
           <p className="meta" style={{ margin: "8px 0 0" }}>Stored in your workspace storage area (local disk in this prototype; Azure Blob Storage in production).</p>
-          {meta && <div className="row" style={{ marginTop: 10 }}><button className="btn primary" onClick={() => setReady(true)} data-testid="upload-continue">Continue to project details</button></div>}
+          {meta && mediaKind && file && <div style={{ marginTop: 10 }}><TrimSplit file={file} kind={mediaKind} upload={meta} onApplied={setParts} onPending={setCutPending} /></div>}
+          {meta && <div className="row" style={{ marginTop: 10 }}>
+            <button className="btn primary" disabled={cutPending} onClick={() => setReady(true)} data-testid="upload-continue">{parts.length > 1 ? `Continue with ${parts.length} parts` : "Continue to project details"}</button>
+            {cutPending && <span className="meta">Apply the trim or split first, or choose “Use the whole file”.</span>}
+          </div>}
         </div>
       )}
     </div>

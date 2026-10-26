@@ -8,6 +8,7 @@ export const PERSONA = {
   translator: "kenji.watanabe@demo.el-knowledge.test",
   wsadmin: "daniel.okafor@demo.el-knowledge.test",
   consumer: "leo.fischer@demo.el-knowledge.test",
+  platform: "ines.duarte@demo.el-knowledge.test",
 } as const;
 
 export async function signIn(page: Page, who: keyof typeof PERSONA) {

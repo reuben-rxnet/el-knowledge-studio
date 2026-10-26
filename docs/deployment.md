@@ -31,6 +31,15 @@ Knowzy reads approved guides from a folder through its `FILE_REPOSITORY` source.
 - The sidecar declares no access rules: Knowzy's own source boundary and authorization decide who sees the content.
 - In Azure, mount an Azure Files share (or a synced SharePoint library) at the export path, and point the Knowzy source at the same share.
 
+## Uploads
+
+- **Limits per file type** are set by platform administrators on the Administration page (stored in the `AppSetting` table, audited). Defaults: video 1 GB, audio 500 MB, PowerPoint 300 MB, PDF 200 MB, Word 100 MB, images 25 MB, text 10 MB.
+- **`UPLOAD_CEILING_MB`** (default 2048) is the most anyone can set there. Size it to the environment: storage, and any proxy or WAF in front of the app.
+- **Streaming:** the browser sends the file as the request body and the server writes it to storage as it arrives, counting and hashing on the way. Memory use doesn't grow with file size, and an upload over its limit is stopped mid-stream with nothing left behind.
+- **Trim and split:** after a video or audio upload, the creator can trim it or split it into up to 20 parts (`/api/uploads/edit`, FFmpeg stream copy: fast, no quality loss, cuts on the nearest keyframe). Each part becomes its own project, and the parts link to each other on the project page.
+- **Production:** for files near 1 GB, upload straight from the browser to Blob Storage with a short-lived, write-only SAS URL (chunked, resumable), so large uploads never pass through the app. Check with IT whether Front Door or the WAF limits request body size on the app's route.
+- Uploads that never become a project (abandoned, or the original of a trimmed file) stay in storage. A clean-up job for these is still to do.
+
 ## Rate limits
 
 | What | Limit | Key |

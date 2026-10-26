@@ -26,8 +26,8 @@ const voicesSnapshot = () => {
 };
 const noVoices: SpeechSynthesisVoice[] = [];
 
-export function MediaPlayer({ projectId, hasRecording, duration, scenes, segments, languages, sceneId, onScene }: {
-  projectId: string; hasRecording: boolean; duration: number; scenes: Scene[]; segments: Segment[]; languages: Lang[];
+export function MediaPlayer({ projectId, hasRecording, duration, scenes, segments, languages, sceneId, onScene, scenePages = [] }: {
+  projectId: string; hasRecording: boolean; duration: number; scenes: Scene[]; segments: Segment[]; languages: Lang[]; scenePages?: (string | null)[];
   sceneId: string; onScene: (id: string) => void;
 }) {
   const [mode, setMode] = useState<"video" | "narration">(hasRecording ? "video" : "narration");
@@ -93,7 +93,7 @@ export function MediaPlayer({ projectId, hasRecording, duration, scenes, segment
         </video>
       ) : (
         <div className="player" role="img" aria-label={`Narration preview, chapter ${idx + 1}: ${scene.title}`}>
-          <PlayerScreen scene={scene} index={idx} caption={captions ? textOf(idx) : null} />
+          <PlayerScreen scene={scene} index={idx} caption={captions ? textOf(idx) : null} image={scenePages[idx] ?? null} />
         </div>
       )}
 

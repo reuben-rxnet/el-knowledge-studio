@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CheckCircle2, Network, Send } from "lucide-react";
+import { ChevronLeft, ChevronRight, CheckCircle2, Network, Send } from "lucide-react";
 import { requirePageSession } from "@/lib/auth/session";
 import { db } from "@/lib/database/client";
 import { freshnessOf } from "@/lib/domain/constants";
@@ -14,7 +14,14 @@ export default async function ProjectLayout({ children, params }: { children: Re
   const s = await requirePageSession();
   const { id } = await params;
   const p = await getProjectOr404(s, id);
-  const openComments = await db.comment.count({ where: { projectId: p.id, resolvedAt: null } });
+  const [openComments, parts] = await Promise.all([
+    db.comment.count({ where: { projectId: p.id, resolvedAt: null } }),
+    // The other parts of the same split upload, in order (only those still in this workspace).
+    p.partGroup ? db.project.findMany({ where: { partGroup: p.partGroup, workspaceId: s.workspace.id, deletedAt: null }, orderBy: { partNumber: "asc" }, select: { id: true, partNumber: true, title: true } }) : Promise.resolve([]),
+  ]);
+  const at = parts.findIndex((x) => x.id === p.id);
+  const prev = at > 0 ? parts[at - 1] : null;
+  const next = at >= 0 && at < parts.length - 1 ? parts[at + 1] : null;
   const canSubmit = s.permissions.has("project.edit") && ["ai-generated", "creator-review", "changes-requested", "draft"].includes(p.status);
 
   return (
@@ -29,6 +36,16 @@ export default async function ProjectLayout({ children, params }: { children: Re
               <span className="meta">Version {p.currentVersion}{p.approvedVersion ? ` · v${p.approvedVersion} approved` : ""}{p.publishedVersion ? ` · v${p.publishedVersion} published` : ""}</span>
             </div>
             <h1 className="page-title" style={{ marginTop: 6 }}>{p.title}</h1>
+            {parts.length > 1 && (
+              <nav aria-label="Parts of this recording" className="row" style={{ gap: 6, flexWrap: "wrap", margin: "6px 0" }} data-testid="parts-nav">
+                <span className="meta">Part {p.partNumber} of {p.partCount}</span>
+                {prev ? <Link className="btn sm" href={`/projects/${prev.id}`}><ChevronLeft size={14} aria-hidden /> Part {prev.partNumber}</Link> : null}
+                {parts.map((x) => x.id === p.id
+                  ? <span key={x.id} className="chip" aria-current="page" aria-pressed="true">{x.partNumber}</span>
+                  : <Link key={x.id} className="chip" href={`/projects/${x.id}`} title={x.title} aria-label={`Part ${x.partNumber}: ${x.title}`}>{x.partNumber}</Link>)}
+                {next ? <Link className="btn sm" href={`/projects/${next.id}`}>Part {next.partNumber} <ChevronRight size={14} aria-hidden /></Link> : null}
+              </nav>
+            )}
             <div className="meta">{s.workspace.name.startsWith(p.businessFunction) ? s.workspace.name : `${p.businessFunction} · ${s.workspace.name}`} · Owner {p.owner.displayName} · Updated {relativeTime(p.updatedAt)}{p.nextReviewAt ? ` · Next review ${formatDate(p.nextReviewAt)}` : ""}</div>
           </div>
           <div className="row" style={{ justifyContent: "flex-end" }}>

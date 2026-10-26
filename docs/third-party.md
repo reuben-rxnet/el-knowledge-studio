@@ -8,7 +8,10 @@ Phase 2 uses established open-source products for media. All of them run on the 
 | [OpenAI Whisper](https://github.com/openai/whisper) weights (`onnx-community/whisper-base`) | Speech-to-text for recordings | MIT (weights and code) | Larger models (`whisper-small`, `whisper-medium`) are more accurate and slower. Set `LOCAL_STT_MODEL` |
 | [Transformers.js](https://github.com/huggingface/transformers.js) (`@huggingface/transformers`) with ONNX Runtime | Runs Whisper and Kokoro in Node | Apache-2.0 (ONNX Runtime: MIT) | Models download once from Hugging Face into `MODELS_DIR`. Pre-load them in an image if the servers have no internet access |
 | [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) via `kokoro-js` | AI voiceover (English voices) | Apache-2.0 | English only. Other languages use the browser preview voice until a multilingual voice is approved |
-| [unpdf](https://github.com/unjs/unpdf), [JSZip](https://stuk.github.io/jszip/) | Text from PDF, DOCX and PPTX uploads | MIT / MIT (or GPL-3.0, dual) | — |
+| [unpdf](https://github.com/unjs/unpdf), [JSZip](https://stuk.github.io/jszip/) | Text from PDF, DOCX and PPTX uploads; PDF pages as images | MIT / MIT (or GPL-3.0, dual) | — |
+| [@napi-rs/canvas](https://github.com/Brooooooklyn/canvas) | Draws PDF pages to PNG (slide images in document videos) | MIT | Prebuilt binary, no install script |
+| [LibreOffice](https://www.libreoffice.org) (headless, on the server) | Converts PPTX and DOCX to PDF so their slides and pages appear in the video | MPL-2.0 | In the Docker image (`libreoffice-impress`, `libreoffice-writer`). On Windows, install it or set `SOFFICE_PATH`. Without it, presentation videos fall back to text slides |
+| Microsoft 365 desktop apps (PowerPoint, Word), development PCs only | Export PPTX and DOCX to PDF through Office automation, for exact rendering of company templates | Microsoft 365 licence (already held) | Windows development only: Office isn't supported unattended on a server. Production: LibreOffice, or Microsoft Graph conversion once `Sites.Selected` is granted (`iam-registration.md`). The automation never closes an Office window someone has open |
 
 Measured on the development PC (CPU only):
 - Kokoro speaks at about 1.6 seconds of compute per second of audio.

@@ -24,7 +24,7 @@ const nextConfig: NextConfig = {
   ...(process.env.NEXT_OUTPUT === "standalone" ? { output: "standalone" as const } : {}),
   poweredByHeader: false,
   // Native, open-source media/AI packages run as plain Node modules on the server (not bundled).
-  serverExternalPackages: ["@azure/storage-blob", "@azure/identity", "@huggingface/transformers", "onnxruntime-node", "kokoro-js", "sharp", "ffmpeg-static"],
+  serverExternalPackages: ["@napi-rs/canvas", "@azure/storage-blob", "@azure/identity", "@huggingface/transformers", "onnxruntime-node", "kokoro-js", "sharp", "ffmpeg-static"],
   async headers() {
     return [
       {

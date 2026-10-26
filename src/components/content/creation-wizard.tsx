@@ -13,9 +13,12 @@ const STEPS = ["Source", "Outputs", "Context", "Template", "Review"] as const;
 
 export interface UploadMeta { fileName: string; mimeType: string; sizeBytes: number; checksum: string; durationSec?: number; storageKey?: string }
 
-export function CreationWizard({ owner, initialSource = "recording", upload, initialTemplate, aiLabel }: {
+export function CreationWizard({ owner, initialSource = "recording", upload, parts = [], initialTemplate, aiLabel }: {
   owner: string; initialSource?: SourceKind; upload?: UploadMeta; initialTemplate?: string; aiLabel: string;
+  /** A file split into parts: one project per part, with the same details. */
+  parts?: UploadMeta[];
 }) {
+  const split = parts.length > 1;
   const router = useRouter();
   const [step, setStep] = useState(upload ? 1 : 0);
   const [pending, start] = useTransition();
@@ -24,7 +27,7 @@ export function CreationWizard({ owner, initialSource = "recording", upload, ini
   const heading = useRef<HTMLHeadingElement>(null);
   const [v, setV] = useState<CreateProjectInput>({
     sourceKind: initialSource, outputs: ["video", "guide", "article", "subtitles"],
-    title: upload ? upload.fileName.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ") : "", description: "",
+    title: upload ? upload.fileName.replace(/\.[^.]+$/, "").replace(/ \((trimmed|part \d+ of \d+)\)$/, "").replace(/[-_]+/g, " ") : "", description: "",
     businessFunction: "Retail Operations", processCategory: "", region: "Europe", country: "", sourceSystem: "", audience: "",
     classification: "Internal", smeName: "", approverName: "", primaryLanguage: "en", targetLanguages: ["fr", "it"], destinations: ["sharepoint"],
     reviewFrequencyDays: 180, templateKey: (initialTemplate as CreateProjectInput["templateKey"]) ?? "global", upload,
@@ -56,6 +59,18 @@ export function CreationWizard({ owner, initialSource = "recording", upload, ini
 
   function submit() {
     start(async () => {
+      if (split) {
+        // One project per part, in order; stop at the first failure and say how far it got.
+        let first: string | null = null;
+        const group = crypto.randomUUID();
+        for (const [i, part] of parts.entries()) {
+          const r = await createProject({ ...v, title: `${v.title} (part ${i + 1} of ${parts.length})`.slice(0, 120), upload: part, part: { group, number: i + 1, count: parts.length } });
+          if (!r.ok) { setErrors(r.fieldErrors ?? {}); setFormError(`${i ? `${i} of ${parts.length} projects were created. ` : ""}${r.error.message}`); return; }
+          first ??= r.data.projectId;
+        }
+        router.push(`/projects/${first}/processing`);
+        return;
+      }
       const res = await createProject(v);
       if (res.ok) { router.push(`/projects/${res.data.projectId}/processing`); return; }
       setErrors(res.fieldErrors ?? {});
@@ -136,7 +151,8 @@ export function CreationWizard({ owner, initialSource = "recording", upload, ini
         {step === 4 && (<>
           <div className="tablewrap"><table><tbody>
             {([
-              ["Source", SOURCE_KINDS.find((k) => k.key === v.sourceKind)?.label + (upload ? ` · ${upload.fileName}` : "")],
+              ["Source", SOURCE_KINDS.find((k) => k.key === v.sourceKind)?.label + (split ? ` · ${parts.length} parts` : upload ? ` · ${upload.fileName}` : "")],
+              ...(split ? [["Projects", `${parts.length} projects, one per part: “${v.title} (part 1 of ${parts.length})” and so on`]] : []),
               ["Outputs", v.outputs.map((o) => OUTPUT_TYPES.find((x) => x.key === o)?.label).join(", ")],
               ["Title", v.title], ["Function", `${v.businessFunction} · ${v.processCategory}`], ["Region", `${v.region} · ${v.country}`],
               ["Classification", v.classification], ["Owner / SME / Approver", [owner, v.smeName || "Auto-assign", v.approverName || "Auto-assign"].join(" / ")],
@@ -153,7 +169,7 @@ export function CreationWizard({ owner, initialSource = "recording", upload, ini
         <button type="button" className="btn" disabled={step === 0 || pending} onClick={() => go(step - 1)}><ArrowLeft size={16} aria-hidden /> Back</button>
         {step < 4
           ? <button type="button" className="btn primary" onClick={() => validateStep() && go(step + 1)}>Continue <ArrowRight size={16} aria-hidden /></button>
-          : <button type="button" className="btn primary" disabled={pending} onClick={submit} data-testid="wizard-create"><Sparkles size={16} aria-hidden /> {pending ? "Creating…" : "Create and start processing"}</button>}
+          : <button type="button" className="btn primary" disabled={pending} onClick={submit} data-testid="wizard-create"><Sparkles size={16} aria-hidden /> {pending ? "Creating…" : split ? `Create ${parts.length} projects and start processing` : "Create and start processing"}</button>}
       </div>
     </div>
   );

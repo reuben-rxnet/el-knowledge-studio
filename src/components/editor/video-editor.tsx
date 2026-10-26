@@ -13,9 +13,11 @@ interface Scene { id: string; title: string; startSec: number; endSec: number; f
 interface Segment { id: string; startSec: number; endSec: number; originalText: string; text: string; origin: string; locked: boolean; flagged: string | null }
 type Rewrite = "shorten" | "simplify" | "professional" | "instructional" | "expand";
 
-export function VideoEditor({ projectId, version, duration, scenes, script, canEdit, aiLabel, initialSceneId, hasRecording, languages }: {
+export function VideoEditor({ projectId, version, duration, scenes, script, canEdit, aiLabel, initialSceneId, hasRecording, languages, scenePages = [] }: {
   projectId: string; version: number; duration: number; scenes: Scene[]; script: Segment[]; canEdit: boolean; aiLabel: string; initialSceneId?: string;
   hasRecording: boolean; languages: { code: string; label: string; texts: Record<string, string> }[];
+  /** Page or slide image URL per chapter (documents and presentations). */
+  scenePages?: (string | null)[];
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -62,7 +64,7 @@ export function VideoEditor({ projectId, version, duration, scenes, script, canE
         </nav>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
-          <MediaPlayer projectId={projectId} hasRecording={hasRecording} duration={duration} scenes={scenes} sceneId={scene.id} onScene={setSel}
+          <MediaPlayer projectId={projectId} hasRecording={hasRecording} scenePages={scenePages} duration={duration} scenes={scenes} sceneId={scene.id} onScene={setSel}
             segments={script.map((x) => ({ id: x.id, startSec: x.startSec, endSec: x.endSec, text: x.text }))} languages={languages} />
 
           <div className="card timeline" role="group" aria-label="Timeline">

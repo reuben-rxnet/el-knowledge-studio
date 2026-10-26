@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { BUSINESS_FUNCTIONS, CLASSIFICATIONS, DESTINATIONS, LANGUAGES, OUTPUT_TYPES, REGIONS, SOURCE_KINDS, TEMPLATES } from "@/lib/domain/constants";
+import { CATEGORY_META, DEFAULT_UPLOAD_LIMITS, MB, categoryOf, formatLimit, type UploadLimits } from "./upload-limits";
 
 const keys = <T extends readonly { key: string }[]>(xs: T) => xs.map((x) => x.key) as [T[number]["key"], ...T[number]["key"][]];
 const langCodes = LANGUAGES.map((l) => l.code) as [string, ...string[]];
@@ -28,6 +29,8 @@ export const createProjectSchema = z
     upload: z
       .object({ fileName: text(200).min(1), mimeType: text(120), sizeBytes: z.number().int().nonnegative(), checksum: text(128).min(8), durationSec: z.number().int().nonnegative().optional(), storageKey: text(200).optional() })
       .optional(),
+    /** One of the parts of a split upload: links the projects so each shows the others. */
+    part: z.object({ group: z.guid(), number: z.number().int().min(1).max(20), count: z.number().int().min(2).max(20) }).refine((x) => x.number <= x.count).optional(),
   })
   .refine((v) => v.classification !== "Restricted", { path: ["classification"], message: "Restricted content can't be recorded or processed by AI." })
   .refine((v) => !v.targetLanguages.includes(v.primaryLanguage), { path: ["targetLanguages"], message: "Target languages can't include the primary language." });
@@ -71,11 +74,10 @@ export const stepEditSchema = z.object({
   tip: text(1000).optional(),
 });
 
-/** Upload validation shared by client and server. */
+/** Upload validation shared by client and server. Size limits per type: upload-limits.ts. */
 export const UPLOAD_RULES = {
-  maxBytes: Number(process.env.MAX_UPLOAD_MB ?? 2048) * 1024 * 1024,
   types: {
-    mp4: ["video/mp4"], mov: ["video/quicktime"], webm: ["video/webm"], mp3: ["audio/mpeg"], wav: ["audio/wav", "audio/x-wav"],
+    mp4: ["video/mp4"], mov: ["video/quicktime"], webm: ["video/webm"], mp3: ["audio/mpeg", "audio/mp3"], wav: ["audio/wav", "audio/x-wav", "audio/wave", "audio/vnd.wave"],
     pptx: ["application/vnd.openxmlformats-officedocument.presentationml.presentation"],
     docx: ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
     pdf: ["application/pdf"], txt: ["text/plain"], png: ["image/png"], jpg: ["image/jpeg"], jpeg: ["image/jpeg"],
@@ -84,13 +86,22 @@ export const UPLOAD_RULES = {
 
 export type UploadCheck = { ok: true; kind: "video" | "audio" | "document" | "presentation" | "images" } | { ok: false; code: string; message: string };
 
-export function validateUpload(file: { name: string; type: string; size: number }, maxBytes = UPLOAD_RULES.maxBytes): UploadCheck {
+/** Too large for its type: the limit, the file's size, and what to do. */
+export function tooLargeMessage(fileName: string, sizeBytes: number | null, limits: UploadLimits) {
+  const c = categoryOf(fileName) ?? "document";
+  const media = c === "video" || c === "audio";
+  return `${CATEGORY_META[c].label} files can be up to ${formatLimit(limits[c])}; this one is ${sizeBytes === null ? "larger" : formatLimit(Math.ceil(sizeBytes / MB))}. ` +
+    (media ? "Cut it into shorter parts before uploading (after upload you can trim or split it further here), or ask a platform administrator to raise the limit." : "Reduce its size, or ask a platform administrator to raise the limit.");
+}
+
+export function validateUpload(file: { name: string; type: string; size: number }, limits: UploadLimits = DEFAULT_UPLOAD_LIMITS): UploadCheck {
   const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
   const allowed = UPLOAD_RULES.types[ext];
-  if (!allowed) return { ok: false, code: "UNSUPPORTED_TYPE", message: `.${ext || "?"} files aren't supported. Use MP4, MOV, WEBM, MP3, WAV, PPTX, DOCX, PDF, PNG or JPG.` };
+  const category = categoryOf(file.name);
+  if (!allowed || !category) return { ok: false, code: "UNSUPPORTED_TYPE", message: `.${ext || "?"} files aren't supported. Use MP4, MOV, WEBM, MP3, WAV, PPTX, DOCX, PDF, TXT, PNG or JPG.` };
   if (file.type && !allowed.includes(file.type)) return { ok: false, code: "TYPE_MISMATCH", message: `The file says it's .${ext} but its content type is ${file.type}. Export it again and retry.` };
   if (file.size === 0) return { ok: false, code: "EMPTY_FILE", message: "This file is empty or damaged. Export it again from the original application." };
-  if (file.size > maxBytes) return { ok: false, code: "TOO_LARGE", message: `This file is larger than ${Math.round(maxBytes / 1048576)} MB. Trim it or split it into parts.` };
+  if (file.size > limits[category] * MB) return { ok: false, code: "TOO_LARGE", message: tooLargeMessage(file.name, file.size, limits) };
   const kind = ["mp4", "mov", "webm"].includes(ext) ? "video" : ["mp3", "wav"].includes(ext) ? "audio" : ext === "pptx" ? "presentation" : ["png", "jpg", "jpeg"].includes(ext) ? "images" : "document";
   return { ok: true, kind };
 }

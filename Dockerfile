@@ -1,6 +1,7 @@
 # EL Knowledge Studio — production image (Next.js standalone server).
 #   docker build -t el-knowledge-studio .
 #   docker run -p 3000:3000 --env-file .env.production el-knowledge-studio
+# LibreOffice (headless) turns PPTX/DOCX into page images for document videos.
 # FFmpeg comes from the Debian package here; check its licence with Legal (see docs/third-party.md)
 # or point FFMPEG_PATH at an approved LGPL build.
 
@@ -29,7 +30,7 @@ RUN node scripts/prisma-provider.mjs ${PRISMA_PROVIDER} && npx prisma generate &
 FROM node:22-bookworm-slim AS run
 WORKDIR /app
 ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0 MODELS_DIR=/app/models FFMPEG_PATH=/usr/bin/ffmpeg STORAGE_DIR=/app/storage
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core ca-certificates openssl && rm -rf /var/lib/apt/lists/* \
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core fonts-liberation ca-certificates openssl libreoffice-impress libreoffice-writer && rm -rf /var/lib/apt/lists/* \
   && groupadd --system app && useradd --system --gid app --home /app app && mkdir -p /app/models /app/storage && chown -R app:app /app
 COPY --from=build --chown=app:app /app/.next/standalone ./
 COPY --from=build --chown=app:app /app/.next/static ./.next/static
