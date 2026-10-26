@@ -40,6 +40,15 @@ Knowzy reads approved guides from a folder through its `FILE_REPOSITORY` source.
 - **Production:** for files near 1 GB, upload straight from the browser to Blob Storage with a short-lived, write-only SAS URL (chunked, resumable), so large uploads never pass through the app. Check with IT whether Front Door or the WAF limits request body size on the app's route.
 - Uploads that never become a project (abandoned, or the original of a trimmed file) stay in storage. A clean-up job for these is still to do.
 
+## Studio (beta)
+
+The new timeline editor, a tab next to Video while the `studio-beta` feature flag is on. The Video tab and its renders are unchanged.
+
+- **Edit list:** each project's edits are stored as one JSON document (`StudioEdit`, format in `src/lib/studio/edl.ts`): clips (cut, reordered, trimmed, sped up) and blur boxes anchored to the recording. The original file is never changed. Saves carry a revision, so a stale save is refused instead of overwriting someone else's.
+- **Preview = render:** the browser plays the edit (jumping between clips at their speeds, drawing blur boxes and captions over the video); the server renders the same list.
+- **Rendering:** one FFmpeg segment per clip (frame-accurate seek, speed, blur boxes, burned-in captions), then joined without re-encoding. Memory stays flat for long recordings. Renders are stored with `engine = "studio"`; the Video tab lists only its own.
+- **Phase 1 scope:** recordings and videos (not audio-only or documents); original audio only (no AI voice yet); captions in the primary language.
+
 ## Rate limits
 
 | What | Limit | Key |

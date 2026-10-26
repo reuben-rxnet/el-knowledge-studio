@@ -141,6 +141,7 @@ async function main() {
     { key: "voice-cloning", enabled: false, description: "Disabled. Requires legal, privacy, security and employee-consent review." },
     { key: "public-portal", enabled: false, description: "Controlled public portal destination. Disabled by default." },
     { key: "camera-overlay", enabled: false, description: "Camera overlay during recording. Future-ready, off." },
+    { key: "studio-beta", enabled: true, description: "Studio (beta): the new timeline video editor, as a tab next to Video. The Video tab is unchanged." },
   ] });
 
   console.log(`Seeded ${WORKSPACES.length} workspaces, ${USERS.length} users, ${PROJECTS.length} projects.`);

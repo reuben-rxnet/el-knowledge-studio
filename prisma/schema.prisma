@@ -446,6 +446,8 @@ model RenderJob {
   language    String
   aiVoice     Boolean   @default(false)
   voice       String?
+  engine      String    @default("classic") // classic (Video tab) | studio (Studio beta)
+  captions    Boolean   @default(true) // Studio: burn captions in
   detail      String    @default("Queued")
   outputKey   String?
   durationSec Int?
@@ -479,4 +481,13 @@ model AppSetting {
   value       String   // JSON
   updatedAt   DateTime @updatedAt
   updatedById String?
+}
+
+/// Studio (beta): the project's edit list (JSON, see src/lib/studio/edl.ts). The recording itself is never changed.
+model StudioEdit {
+  projectId   String   @id
+  edl         String
+  revision    Int      @default(1) // bumped on every save; a stale save is refused
+  updatedAt   DateTime @updatedAt
+  updatedById String
 }

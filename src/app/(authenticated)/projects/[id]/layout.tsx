@@ -5,6 +5,7 @@ import { db } from "@/lib/database/client";
 import { freshnessOf } from "@/lib/domain/constants";
 import { formatDate, relativeTime } from "@/lib/utilities/format";
 import { getProjectOr404 } from "@/server/queries";
+import { studioEnabled } from "@/server/studio";
 import { ClassificationTag, FreshnessPill, StatusPill } from "@/components/common/badges";
 import { Thumb } from "@/components/common/thumb";
 import { ProjectTabs } from "@/components/content/project-tabs";
@@ -55,7 +56,7 @@ export default async function ProjectLayout({ children, params }: { children: Re
             {p.publishedVersion && <Link className="btn" href={`/knowledge?q=${encodeURIComponent(p.title)}`}><Network size={16} aria-hidden /> View in Knowledge Hub</Link>}
           </div>
         </div>
-        <ProjectTabs projectId={p.id} openComments={openComments} />
+        <ProjectTabs projectId={p.id} openComments={openComments} studio={s.permissions.has("project.edit") && (await studioEnabled())} />
       </div>
       {children}
     </section>

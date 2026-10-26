@@ -46,3 +46,30 @@ export async function mediaDurationSec(filePath: string): Promise<number> {
     child.on("error", () => resolve(0));
   });
 }
+
+function ffmpegStderr(args: string[]): Promise<string> {
+  return new Promise((resolve) => {
+    const child = spawn(FFMPEG, ["-hide_banner", ...args], { windowsHide: true });
+    let err = "";
+    child.stderr.on("data", (d: Buffer) => { err = (err + d.toString()).slice(-200_000); });
+    child.on("close", () => resolve(err));
+    child.on("error", () => resolve(""));
+  });
+}
+const hms = (m: RegExpMatchArray | null | undefined) => (m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) : 0);
+
+/**
+ * Duration and which streams a media file has. Browser screen recordings (WEBM from MediaRecorder)
+ * often have no duration in their header ("Duration: N/A"); then the file is read through without
+ * decoding (stream copy to nowhere, milliseconds even for long files) and the last timestamp is used.
+ */
+export async function probeMedia(filePath: string): Promise<{ durationSec: number; hasVideo: boolean; hasAudio: boolean }> {
+  const head = await ffmpegStderr(["-i", filePath]);
+  const streams = { hasVideo: /Stream #\S+.*: Video:/.test(head), hasAudio: /Stream #\S+.*: Audio:/.test(head) };
+  let durationSec = hms(head.match(/Duration: (\d+):(\d+):(\d+(?:\.\d+)?)/));
+  if (!durationSec && (streams.hasVideo || streams.hasAudio)) {
+    const scan = await ffmpegStderr(["-i", filePath, "-map", "0", "-c", "copy", "-f", "null", "-"]);
+    durationSec = hms([...scan.matchAll(/time=(\d+):(\d+):(\d+(?:\.\d+)?)/g)].at(-1));
+  }
+  return { durationSec, ...streams };
+}

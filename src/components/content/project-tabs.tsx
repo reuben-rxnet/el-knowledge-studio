@@ -4,12 +4,14 @@ import { usePathname } from "next/navigation";
 
 const TABS: [string, string][] = [["", "Overview"], ["video", "Video"], ["guide", "Guide"], ["knowledge", "Knowledge"], ["translations", "Translations"], ["review", "Review"], ["publishing", "Publishing"], ["activity", "Activity"]];
 
-export function ProjectTabs({ projectId, openComments }: { projectId: string; openComments: number }) {
+export function ProjectTabs({ projectId, openComments, studio = false }: { projectId: string; openComments: number; studio?: boolean }) {
   const path = usePathname();
   const base = `/projects/${projectId}`;
+  // Studio (beta) sits right after Video while the feature flag is on.
+  const tabs: [string, string][] = studio ? [TABS[0]!, TABS[1]!, ["studio", "Studio (beta)"], ...TABS.slice(2)] : TABS;
   return (
     <nav className="tabs" aria-label="Project sections">
-      {TABS.map(([k, l]) => {
+      {tabs.map(([k, l]) => {
         const href = k ? `${base}/${k}` : base;
         const active = k ? path.startsWith(href) : path === base;
         return (
