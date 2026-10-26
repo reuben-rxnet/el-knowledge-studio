@@ -33,3 +33,15 @@ export async function loadEdl(projectId: string, userId: string): Promise<{ edl:
   const saved = await db.studioEdit.upsert({ where: { projectId }, create: { projectId, edl: JSON.stringify(edl), updatedById: userId }, update: { edl: JSON.stringify(edl), revision: { increment: 1 }, updatedById: userId } });
   return { edl, revision: saved.revision };
 }
+
+/**
+ * A job still "running" 30 minutes after it started died with its server process (a restart, or a
+ * hang): mark it stopped so Studio unlocks and it can be started again. Checked whenever Studio
+ * loads, polls or starts a job.
+ */
+export async function expireStaleStudioJobs(projectId: string) {
+  await db.studioJob.updateMany({
+    where: { projectId, status: { in: ["queued", "running"] }, createdAt: { lt: new Date(Date.now() - 30 * 60_000) } },
+    data: { status: "failed", detail: "Stopped: this run didn't finish (the server restarted or it hung). Start it again.", completedAt: new Date() },
+  });
+}

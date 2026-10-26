@@ -225,11 +225,15 @@ export function StudioEditor({ projectId, initialEdl, initialRevision, mediaUrl,
     else apply(removeAnnotation(edlRef.current, sel.id));
     setSel(null);
   }, [apply, canEdit, sel]);
+  const [focusText, setFocusText] = useState<string | null>(null); // a new callout: its text field gets focus
+  const [inlineEdit, setInlineEdit] = useState<string | null>(null); // a callout being typed into on the video
   const annotate = useCallback((kind: AnnotationKind) => {
     if (!canEdit) return;
     const id = newId("n");
     apply(addAnnotation(edlRef.current, outRef.current, kind, id));
     setSel({ kind: "note", id });
+    // So typing goes into the callout, not to the shortcuts (typing "s" would otherwise split the clip).
+    if (kind === "text" || kind === "badge") setFocusText(id);
   }, [apply, canEdit]);
   /** Editing by text: cut a stretch of the recording (a little margin so word edges don't click). */
   const cutRange = useCallback((a: number, b: number) => { if (canEdit) apply(cutSource(edlRef.current, Math.max(0, a - 0.04), b + 0.04, () => newId("c"))); }, [apply, canEdit]);
@@ -365,17 +369,47 @@ export function StudioEditor({ projectId, initialEdl, initialRevision, mediaUrl,
   const activeBlurs = blursAt(edl, here.srcTime);
   const activeNotes = annotationsAt(edl, here.srcTime);
   const notesCanvas = useRef<HTMLCanvasElement>(null);
-  // Annotations are drawn with the same code the renderer uses, at the picture's on-screen size.
+  const [frame, setFrame] = useState(0); // bumps when the video shows a new frame after seeking
+  /**
+   * The preview's picture layer, in the render's order: first each blur box (that part of the current
+   * video frame, blurred), then the annotations, drawn with the same code the renderer uses.
+   * Blurring is done on a canvas because CSS backdrop blur isn't applied reliably over video.
+   */
   useEffect(() => {
-    const c = notesCanvas.current;
-    if (!c || !box.width) return;
+    const c = notesCanvas.current, v = video.current;
+    if (!c || !v || !box.width) return;
     const dpr = window.devicePixelRatio || 1;
     c.width = Math.round(box.width * dpr); c.height = Math.round(box.height * dpr);
     const g = c.getContext("2d");
     if (!g) return;
     g.clearRect(0, 0, c.width, c.height);
+    // Older Safari has no canvas filters (the property is missing, not just empty).
+    const canFilter = typeof (g as unknown as { filter?: unknown }).filter === "string";
+    if (v.videoWidth && v.readyState >= 2) {
+      for (const b of blursAt(edl, here.srcTime)) {
+        const dx = b.x * c.width, dy = b.y * c.height, dw = b.w * c.width, dh = b.h * c.height;
+        const sx = b.x * v.videoWidth, sy = b.y * v.videoHeight, sw = b.w * v.videoWidth, sh = b.h * v.videoHeight;
+        g.save();
+        g.beginPath(); g.rect(dx, dy, dw, dh); g.clip();
+        if (canFilter) {
+          // Strong enough to make text unreadable, and drawn from a wider area than the box (then clipped),
+          // so the blur has real pixels at its edges and covers the box completely instead of fading out.
+          const px = Math.max(6, Math.min(dw, dh) * 0.5), pad = px * 2.5, k = v.videoWidth / c.width;
+          const x0 = Math.max(0, sx - pad * k), y0 = Math.max(0, sy - pad * k);
+          const x1 = Math.min(v.videoWidth, sx + sw + pad * k), y1 = Math.min(v.videoHeight, sy + sh + pad * k);
+          g.filter = `blur(${px}px)`;
+          g.drawImage(v, x0, y0, x1 - x0, y1 - y0, x0 / k, y0 / k, (x1 - x0) / k, (y1 - y0) / k);
+        } else {
+          // No canvas filters (older browsers): pixelate instead, so the text is still unreadable.
+          g.imageSmoothingEnabled = false;
+          g.drawImage(v, sx, sy, sw, sh, dx, dy, Math.max(1, dw / 12), Math.max(1, dh / 12));
+          g.drawImage(c, dx, dy, Math.max(1, dw / 12), Math.max(1, dh / 12), dx, dy, dw, dh);
+        }
+        g.restore();
+      }
+    }
     for (const a of byDrawOrder(annotationsAt(edl, here.srcTime))) drawAnnotation(g as unknown as Ctx, a, c.width, c.height);
-  }, [edl, here.srcTime, box.width, box.height]);
+  }, [edl, here.srcTime, box.width, box.height, frame]);
   const saveLabel = save.state === "error" ? save.message : save.state === "saved" ? "All changes saved" : save.state === "saving" ? "Saving…" : "Unsaved changes";
 
   return (
@@ -387,7 +421,7 @@ export function StudioEditor({ projectId, initialEdl, initialRevision, mediaUrl,
         <div style={{ display: "grid", gap: 8, minWidth: 0 }}>
           <div className="player studio-stage" ref={stage}>
             {/* Captions are drawn by Studio from the script (see below), exactly as the render burns them in. */}
-            <video ref={video} src={mediaUrl} preload="auto" playsInline className="studio-video" onLoadedMetadata={() => { measure(); seek(0); }} aria-label="Studio preview" />
+            <video ref={video} src={mediaUrl} preload="auto" playsInline className="studio-video" onLoadedMetadata={() => { measure(); seek(0); }} onSeeked={() => setFrame((n) => n + 1)} onLoadedData={() => setFrame((n) => n + 1)} aria-label="Studio preview" />
             <div className="studio-overlay" style={{ left: box.left, top: box.top, width: box.width, height: box.height }}>
               <canvas ref={notesCanvas} className="studio-notes" aria-hidden data-testid="preview-notes" />
               {activeNotes.map((a) => a.kind === "arrow" ? (
@@ -398,7 +432,16 @@ export function StudioEditor({ projectId, initialEdl, initialRevision, mediaUrl,
               ) : (
                 <div key={a.id} className={`studio-notebox${selNote?.id === a.id ? " on" : ""}`} data-testid="preview-note"
                   style={{ left: `${a.x * 100}%`, top: `${a.y * 100}%`, width: `${a.w * 100}%`, height: `${a.h * 100}%` }}
-                  onPointerDown={(e) => dragNote(e, a, "move")} role="button" tabIndex={-1} aria-label={`${ANNOTATION_LABEL[a.kind]}: drag to move`}>
+                  onPointerDown={(e) => { if (inlineEdit !== a.id) dragNote(e, a, "move"); }}
+                  onDoubleClick={() => { if (canEdit && (a.kind === "text" || a.kind === "badge")) { beginGesture(); setInlineEdit(a.id); } }}
+                  role="button" tabIndex={-1} aria-label={`${ANNOTATION_LABEL[a.kind]}: drag to move${a.kind === "text" || a.kind === "badge" ? ", double-click to type" : ""}`}>
+                  {inlineEdit === a.id && (
+                    <input className="studio-inline" autoFocus defaultValue={a.text} maxLength={a.kind === "badge" ? 3 : 120} aria-label={`${ANNOTATION_LABEL[a.kind]} text`} data-testid="inline-text"
+                      onFocus={(e) => e.currentTarget.select()} onPointerDown={(e) => e.stopPropagation()}
+                      onChange={(e) => { const text = e.target.value; live((cur) => updateAnnotation(cur, a.id, { text })); }}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); setInlineEdit(null); } }}
+                      onBlur={() => setInlineEdit(null)} />
+                  )}
                   {canEdit && <span className="studio-handle" onPointerDown={(e) => dragNote(e, a, "resize")} aria-hidden />}
                 </div>
               ))}
@@ -441,7 +484,7 @@ export function StudioEditor({ projectId, initialEdl, initialRevision, mediaUrl,
         <aside className="card pad studio-inspector" aria-label="Selected item">
           {selClip >= 0 ? <ClipInspector edl={edl} index={selClip} canEdit={canEdit} apply={apply} />
             : selBlur ? <BlurInspector edl={edl} blur={selBlur} canEdit={canEdit} apply={apply} playheadSrc={here.srcTime} />
-            : selNote ? <NoteInspector edl={edl} note={selNote} canEdit={canEdit} apply={apply} playheadSrc={here.srcTime} />
+            : selNote ? <NoteInspector edl={edl} note={selNote} canEdit={canEdit} apply={apply} playheadSrc={here.srcTime} focus={focusText === selNote.id} onFocused={() => setFocusText(null)} />
             : <Help />}
         </aside>
       </div>
@@ -567,7 +610,9 @@ function BlurInspector({ edl, blur, canEdit, apply, playheadSrc }: { edl: Edl; b
   );
 }
 
-function NoteInspector({ edl, note, canEdit, apply, playheadSrc }: { edl: Edl; note: Annotation; canEdit: boolean; apply: (e: Edl) => void; playheadSrc: number }) {
+function NoteInspector({ edl, note, canEdit, apply, playheadSrc, focus, onFocused }: { edl: Edl; note: Annotation; canEdit: boolean; apply: (e: Edl) => void; playheadSrc: number; focus: boolean; onFocused: () => void }) {
+  const textField = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (focus && textField.current) { textField.current.focus(); textField.current.select(); onFocused(); } }, [focus, onFocused]);
   const shown = toOutput(edl, note.srcStart, note.srcEnd);
   return (
     <div style={{ display: "grid", gap: 10 }} data-testid="note-inspector">
@@ -575,7 +620,7 @@ function NoteInspector({ edl, note, canEdit, apply, playheadSrc }: { edl: Edl; n
       <dl className="dl"><dt>In the video</dt><dd>{shown.length ? shown.map((r) => `${stamp(r.start)} – ${stamp(r.end)}`).join(", ") : "Cut out (not in the video)"}</dd></dl>
       {(note.kind === "text" || note.kind === "badge") && (
         <label className="f">{note.kind === "badge" ? "Number" : "Text"}
-          <input type="text" maxLength={note.kind === "badge" ? 3 : 120} value={note.text} disabled={!canEdit} onChange={(e) => apply(updateAnnotation(edl, note.id, { text: e.target.value }))} data-testid="note-text" />
+          <input ref={textField} type="text" maxLength={note.kind === "badge" ? 3 : 120} value={note.text} disabled={!canEdit} onChange={(e) => apply(updateAnnotation(edl, note.id, { text: e.target.value }))} data-testid="note-text" />
         </label>
       )}
       <label className="f">Colour
@@ -587,7 +632,7 @@ function NoteInspector({ edl, note, canEdit, apply, playheadSrc }: { edl: Edl; n
         <button className="btn sm" disabled={!canEdit} onClick={() => apply(updateAnnotation(edl, note.id, { srcStart: playheadSrc }))}>Start at playhead</button>
         <button className="btn sm" disabled={!canEdit} onClick={() => apply(updateAnnotation(edl, note.id, { srcEnd: playheadSrc }))}>End at playhead</button>
       </div>
-      <p className="meta" style={{ margin: 0 }}>{note.kind === "arrow" ? "Drag either end of the arrow on the video." : "Drag it on the video to move it, and its corner to resize."}</p>
+      <p className="meta" style={{ margin: 0 }}>{note.kind === "arrow" ? "Drag either end of the arrow on the video." : `Drag it on the video to move it, and its corner to resize.${note.kind === "text" || note.kind === "badge" ? " Double-click it to type on the video." : ""}`}</p>
     </div>
   );
 }

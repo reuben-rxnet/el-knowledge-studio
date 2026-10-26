@@ -134,9 +134,12 @@ export async function detectScreenPii(filePath: string, o: {
       t: f.t,
       boxes: f.lines.flatMap((l) => {
         const hits = ruleMatches(l.text, o.names);
+        // Codex's finds add to the rules' but never duplicate them: an overlapping find keeps the rule's label.
         for (const part of extra.get(l.text) ?? []) {
           const at = l.text.indexOf(part);
-          if (at >= 0 && part.trim()) hits.push({ start: at, end: at + part.length, label: "Personal data" });
+          if (at < 0 || !part.trim()) continue;
+          const end = at + part.length;
+          if (!hits.some((h) => at < h.end && h.start < end)) hits.push({ start: at, end, label: "Personal data" });
         }
         return hits.flatMap((h) => {
           const b = rangeBox(l, h.start, h.end);

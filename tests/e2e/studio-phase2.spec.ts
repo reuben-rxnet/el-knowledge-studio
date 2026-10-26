@@ -83,8 +83,19 @@ test("Annotations and audio options; personal data on screen is found and blurre
   await signIn(page, "creator");
   await page.goto(`${projectUrl}/studio`);
   await page.keyboard.press("Home");
+  const clipsBefore = await page.getByTestId("studio-clip").count();
   await page.getByTestId("add-text").click();
-  await page.getByTestId("note-text").fill("Reset the queue");
+  // Typing straight away goes into the new callout, not to the shortcuts ("s" would split, "b" would blur).
+  await page.keyboard.type("Reset queues", { delay: 30 });
+  await expect(page.getByTestId("note-text")).toHaveValue("Reset queues");
+  await expect(page.getByTestId("studio-clip")).toHaveCount(clipsBefore);
+  // Or double-click the callout on the video and type there.
+  await page.getByTestId("preview-note").dblclick();
+  await page.getByTestId("inline-text").press("Control+A");
+  await page.getByTestId("inline-text").pressSequentially("Reset the queue", { delay: 30 });
+  await page.getByTestId("inline-text").press("Enter");
+  await expect(page.getByTestId("inline-text")).toHaveCount(0);
+  await expect(page.getByTestId("note-text")).toHaveValue("Reset the queue");
   await page.getByTestId("add-arrow").click();
   await expect(page.getByRole("group", { name: "Annotations" }).getByRole("button")).toHaveCount(2);
   await expect(page.getByTestId("preview-note")).toBeVisible(); // the text callout's handle (arrows have end points)

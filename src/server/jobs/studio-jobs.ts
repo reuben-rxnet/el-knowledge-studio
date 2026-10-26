@@ -55,7 +55,9 @@ export async function runStudioJob(jobId: string) {
     if (!row) throw new Error("Open Studio again to start editing.");
     const edl = replaceAutoBlurs(edlSchema.parse(JSON.parse(row.edl)), found.map((b, i) => ({ ...b, id: `auto${i + 1}`, auto: true })));
     await db.studioEdit.update({ where: { projectId: project.id }, data: { edl: JSON.stringify(edl), revision: { increment: 1 }, updatedById: job.createdById } });
-    const counts = Object.entries(found.reduce<Record<string, number>>((m, b) => ({ ...m, [b.label]: (m[b.label] ?? 0) + 1 }), {})).map(([k, v]) => `${v} ${k.toLowerCase()}${v === 1 ? "" : "s"}`);
+    const NOUN: Record<string, [string, string]> = { "Email address": ["email address", "email addresses"], "Phone number": ["phone number", "phone numbers"], Name: ["name", "names"], "Personal data": ["other item of personal data", "other items of personal data"] };
+    const counts = Object.entries(found.reduce<Record<string, number>>((m, b) => ({ ...m, [b.label]: (m[b.label] ?? 0) + 1 }), {}))
+      .map(([k, v]) => `${v} ${(NOUN[k] ?? [k.toLowerCase(), `${k.toLowerCase()}s`])[v === 1 ? 0 : 1]}`);
     await finish(job.id, (found.length ? `Blurred ${counts.join(", ")}. Check each one before rendering.` : "No personal data found on screen.") + note);
   } catch (e) {
     await db.studioJob.update({ where: { id: job.id }, data: { status: "failed", detail: e instanceof Error ? e.message.slice(0, 300) : "The job failed.", completedAt: new Date() } });
