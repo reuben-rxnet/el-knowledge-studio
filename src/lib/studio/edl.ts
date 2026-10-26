@@ -33,16 +33,45 @@ export type AnnotationColor = keyof typeof ANNOTATION_COLORS;
  */
 export interface Annotation { id: string; kind: AnnotationKind; srcStart: number; srcEnd: number; x: number; y: number; w: number; h: number; text: string; color: AnnotationColor }
 export interface AudioOptions { denoise: boolean; normalize: boolean }
-export interface Edl { v: 1; sourceDuration: number; clips: Clip[]; blurs: BlurBox[]; annotations: Annotation[]; audio: AudioOptions }
-export interface Cue { start: number; end: number; text: string }
+/**
+ * A zoom: from srcStart to srcEnd the picture moves in to `scale` (1.1-4) around (x, y), the focus point
+ * as fractions of the frame. It eases in and out over ZOOM_RAMP_SEC of source time. Found zooms
+ * (`auto`) come from changes on screen; running the detection again replaces only those.
+ */
+export interface Zoom { id: string; srcStart: number; srcEnd: number; x: number; y: number; scale: number; auto?: boolean }
+/** A named point in the recording; becomes a chapter in the MP4 and in the published guide. */
+export interface Chapter { id: string; srcTime: number; title: string }
+export const ASPECTS = ["16:9", "1:1", "9:16"] as const;
+export type Aspect = (typeof ASPECTS)[number];
+/** fit: the whole screen, with bars where the shapes differ. fill: the frame is filled and follows the zooms. */
+export interface OutputOptions { aspect: Aspect; fit: "fit" | "fill" }
+/** `track` is a music library id (built in, or uploaded by a brand administrator). */
+export interface MusicOptions { track: string | null; volume: number; duck: boolean }
+/** The brand template (set in Brand Center) decides how these look; the edit decides whether they appear. */
+export interface BrandOptions { intro: boolean; outro: boolean; lowerThird: boolean }
+/** AI voice reads the script instead of the recorded narration (Kokoro, on this server). */
+export interface VoiceOptions { ai: boolean; voice: string }
+export interface Edl {
+  v: 1; sourceDuration: number; clips: Clip[]; blurs: BlurBox[]; annotations: Annotation[]; audio: AudioOptions;
+  zooms: Zoom[]; chapters: Chapter[]; output: OutputOptions; music: MusicOptions; brand: BrandOptions; voice: VoiceOptions;
+  /** Caption language: the project's language or one of its translations. null = the project's language. */
+  captionLanguage: string | null;
+}
+/** A caption. `ref` is the script paragraph it shows, so a translation can replace its text. */
+export interface Cue { start: number; end: number; text: string; ref?: string }
 /** A spoken word with its time in the source (from Whisper's word timestamps). */
 export interface Word { text: string; start: number; end: number }
 
 const round = (n: number) => Math.round(n * 1000) / 1000;
+export const EDL_DEFAULTS = {
+  zooms: [] as Zoom[], chapters: [] as Chapter[], output: { aspect: "16:9", fit: "fit" } as OutputOptions,
+  music: { track: null, volume: 0.25, duck: true } as MusicOptions, brand: { intro: false, outro: false, lowerThird: false } as BrandOptions,
+  voice: { ai: false, voice: "bf_emma" } as VoiceOptions, captionLanguage: null as string | null,
+};
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
 export function defaultEdl(sourceDuration: number, id = "c1"): Edl {
-  return { v: 1, sourceDuration: round(sourceDuration), clips: [{ id, srcIn: 0, srcOut: round(sourceDuration), speed: 1 }], blurs: [], annotations: [], audio: { denoise: false, normalize: false } };
+  return { v: 1, sourceDuration: round(sourceDuration), clips: [{ id, srcIn: 0, srcOut: round(sourceDuration), speed: 1 }], blurs: [], annotations: [], audio: { denoise: false, normalize: false }, ...EDL_DEFAULTS };
 }
 
 export const clipLength = (c: Clip) => (c.srcOut - c.srcIn) / c.speed;
@@ -260,6 +289,109 @@ export function clipAnnotations(e: Edl, index: number): (Annotation & { start: n
 
 export const setAudio = (e: Edl, patch: Partial<AudioOptions>): Edl => ({ ...e, audio: { ...e.audio, ...patch } });
 
+// --- Zooms ----------------------------------------------------------------------------------------
+
+export const ZOOM_RAMP_SEC = 0.6;
+export const ZOOM_SCALES = [1.25, 1.5, 1.75, 2, 2.5, 3] as const;
+const MIN_ZOOM_SEC = 0.8;
+
+function fitZoom(e: Edl, z: Zoom): Zoom {
+  let srcStart = clamp(z.srcStart, 0, Math.max(0, e.sourceDuration - MIN_ZOOM_SEC));
+  const srcEnd = clamp(z.srcEnd, srcStart + MIN_ZOOM_SEC, e.sourceDuration);
+  if (srcEnd - srcStart < MIN_ZOOM_SEC) srcStart = Math.max(0, srcEnd - MIN_ZOOM_SEC);
+  return { ...z, srcStart: round(srcStart), srcEnd: round(srcEnd), x: round(clamp(z.x, 0, 1)), y: round(clamp(z.y, 0, 1)), scale: round(clamp(z.scale, 1.1, 4)) };
+}
+
+/** Adds a 3-second 2x zoom at output time t, centred (then move its focus on the video). */
+export function addZoom(e: Edl, t: number, id: string): Edl {
+  const { index, srcTime } = locate(e, t);
+  const c = e.clips[index]!;
+  return { ...e, zooms: [...e.zooms, fitZoom(e, { id, srcStart: srcTime, srcEnd: srcTime + Math.max(3 * c.speed, MIN_ZOOM_SEC), x: 0.5, y: 0.5, scale: 2 })].sort((a, b) => a.srcStart - b.srcStart) };
+}
+export function updateZoom(e: Edl, id: string, patch: Partial<Omit<Zoom, "id">>): Edl {
+  return { ...e, zooms: e.zooms.map((z) => (z.id === id ? fitZoom(e, { ...z, ...patch }) : z)) };
+}
+export const removeZoom = (e: Edl, id: string): Edl => ({ ...e, zooms: e.zooms.filter((z) => z.id !== id) });
+/** Replaces the found zooms with a new set; zooms added by hand stay. */
+export const replaceAutoZooms = (e: Edl, found: Zoom[]): Edl =>
+  ({ ...e, zooms: [...e.zooms.filter((z) => !z.auto), ...found.map((z) => fitZoom(e, { ...z, auto: true }))].sort((a, b) => a.srcStart - b.srcStart) });
+export const zoomsAt = (e: Edl, srcTime: number) => e.zooms.filter((z) => srcTime >= z.srcStart && srcTime < z.srcEnd);
+
+/** How far zoom `z` has eased in at source time t: 0 (not zoomed) to 1 (fully in), smoothstep both ways. */
+export function zoomWeight(z: Zoom, t: number): number {
+  const ease = (u: number) => { const v = clamp(u, 0, 1); return v * v * (3 - 2 * v); };
+  return ease((t - z.srcStart) / ZOOM_RAMP_SEC) * ease((z.srcEnd - t) / ZOOM_RAMP_SEC);
+}
+
+/** Output frame size in pixels for each shape (16:9 is the size Studio always rendered). */
+export const OUTPUT_SIZE: Record<Aspect, { w: number; h: number }> = { "16:9": { w: 1280, h: 720 }, "1:1": { w: 960, h: 960 }, "9:16": { w: 720, h: 1280 } };
+
+/** The camera's base rectangle (fractions of the frame) before any zoom: the whole frame, or for "fill" the output's shape. */
+export function baseView(e: Edl, srcAspect: number): { bw: number; bh: number } {
+  const outAspect = OUTPUT_SIZE[e.output.aspect].w / OUTPUT_SIZE[e.output.aspect].h;
+  if (e.output.fit !== "fill") return { bw: 1, bh: 1 };
+  return outAspect < srcAspect ? { bw: outAspect / srcAspect, bh: 1 } : { bw: 1, bh: srcAspect / outAspect };
+}
+
+/**
+ * The part of the recording shown at source time t, as fractions of the frame: the "camera". With no
+ * zoom and "fit" it is the whole frame; "fill" crops to the output's shape. A zoom shrinks the
+ * rectangle by its scale around its focus point, kept inside the frame. Zooms that follow each other
+ * closely blend (one eases out while the next eases in), so the camera pans instead of jumping.
+ * The preview and the renderer both use this, so they show the same thing.
+ */
+export function viewAt(e: Edl, t: number, srcAspect: number): { x: number; y: number; w: number; h: number; zoom: number } {
+  const { bw, bh } = baseView(e, srcAspect);
+  let zoom = 1, cx = 0.5, cy = 0.5;
+  for (const z of e.zooms) {
+    const w = zoomWeight(z, t);
+    if (w <= 0) continue;
+    zoom += w * (z.scale - 1); cx += w * (z.x - 0.5); cy += w * (z.y - 0.5);
+  }
+  zoom = clamp(zoom, 1, 4);
+  const w = bw / zoom, h = bh / zoom;
+  return { x: clamp(cx - w / 2, 0, 1 - w), y: clamp(cy - h / 2, 0, 1 - h), w, h, zoom };
+}
+
+/** Zooms that touch one clip, with their times in that clip's own time. */
+export function clipZooms(e: Edl, index: number): Zoom[] {
+  const c = e.clips[index]!;
+  return e.zooms.filter((z) => z.srcEnd > c.srcIn && z.srcStart < c.srcOut);
+}
+
+// --- Chapters -------------------------------------------------------------------------------------
+
+const MIN_CHAPTER_SEC = 1;
+
+export function addChapter(e: Edl, t: number, id: string, title = ""): Edl {
+  const { srcTime } = locate(e, t);
+  return { ...e, chapters: [...e.chapters, { id, srcTime: round(srcTime), title: (title || `Chapter ${e.chapters.length + 1}`).slice(0, 80) }].sort((a, b) => a.srcTime - b.srcTime) };
+}
+export function updateChapter(e: Edl, id: string, patch: Partial<Omit<Chapter, "id">>): Edl {
+  return { ...e, chapters: e.chapters.map((c) => (c.id === id ? { ...c, title: (patch.title ?? c.title).slice(0, 80), srcTime: round(clamp(patch.srcTime ?? c.srcTime, 0, e.sourceDuration)) } : c)).sort((a, b) => a.srcTime - b.srcTime) };
+}
+export const removeChapter = (e: Edl, id: string): Edl => ({ ...e, chapters: e.chapters.filter((c) => c.id !== id) });
+/** Replaces all chapters (e.g. with the suggested ones), in one undoable step. */
+export const setChapters = (e: Edl, list: { srcTime: number; title: string }[], newId: () => string): Edl =>
+  ({ ...e, chapters: list.map((c) => ({ id: newId(), srcTime: round(clamp(c.srcTime, 0, e.sourceDuration)), title: c.title.slice(0, 80) })).sort((a, b) => a.srcTime - b.srcTime) });
+
+/**
+ * Chapters on the output timeline, in order, each running to the next one. A chapter whose moment was
+ * cut out is dropped; the first chapter starts at 0 (a video's first chapter must). `offset` shifts
+ * them all (an intro card before the edit) without moving the first one off 0.
+ */
+export function outputChapters(e: Edl, offset = 0, extra = 0): { start: number; end: number; title: string }[] {
+  const total = outputDuration(e);
+  const at = e.chapters.flatMap((c) => { const r = toOutput(e, c.srcTime, c.srcTime + 0.01)[0]; return r ? [{ start: r.start, title: c.title }] : []; })
+    .sort((a, b) => a.start - b.start)
+    // Players can't show a chapter under a second long: one that starts with the previous is dropped.
+    .filter((c, i, all) => i === 0 || c.start - all[i - 1]!.start >= MIN_CHAPTER_SEC);
+  if (!at.length) return [];
+  return at.map((c, i) => ({ start: i === 0 ? 0 : round(c.start + offset), end: round((at[i + 1]?.start ?? total + extra) + offset), title: c.title }));
+}
+
+export const setOptions = (e: Edl, patch: Partial<Pick<Edl, "output" | "music" | "brand" | "voice" | "captionLanguage">>): Edl => ({ ...e, ...patch });
+
 // --- Validation (the server never trusts the browser's list) ------------------------------------
 
 const id = z.string().regex(/^[\w-]{1,40}$/);
@@ -276,6 +408,14 @@ export const edlSchema = z.object({
     text: z.string().max(120), color: z.enum(Object.keys(ANNOTATION_COLORS) as [AnnotationColor, ...AnnotationColor[]]),
   })).max(500).default([]),
   audio: z.object({ denoise: z.boolean(), normalize: z.boolean() }).default({ denoise: false, normalize: false }),
+  // Phase 3: zooms, chapters, output shape, music, brand, AI voice, caption language. Older lists default.
+  zooms: z.array(z.object({ id, srcStart: sec, srcEnd: sec, x: z.number().min(0).max(1), y: z.number().min(0).max(1), scale: z.number().min(1).max(4), auto: z.boolean().optional() })).max(1000).default([]),
+  chapters: z.array(z.object({ id, srcTime: sec, title: z.string().max(80) })).max(200).default([]),
+  output: z.object({ aspect: z.enum(ASPECTS), fit: z.enum(["fit", "fill"]) }).default({ aspect: "16:9", fit: "fit" }),
+  music: z.object({ track: z.string().regex(/^[\w-]{1,60}$/).nullable(), volume: z.number().min(0).max(1), duck: z.boolean() }).default({ track: null, volume: 0.25, duck: true }),
+  brand: z.object({ intro: z.boolean(), outro: z.boolean(), lowerThird: z.boolean() }).default({ intro: false, outro: false, lowerThird: false }),
+  voice: z.object({ ai: z.boolean(), voice: z.string().regex(/^[a-z]{2}_[a-z]{2,20}$/) }).default({ ai: false, voice: "bf_emma" }),
+  captionLanguage: z.string().regex(/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$/).nullable().default(null),
 });
 
 /** Checks a list against the real recording length. Returns a problem in plain words, or null. */
@@ -289,6 +429,7 @@ export function edlProblem(e: Edl, sourceDuration: number): string | null {
     if (b.srcEnd <= b.srcStart) return `Blur ${i + 1} ends before it starts.`;
     if (b.x + b.w > 1 + 1e-6 || b.y + b.h > 1 + 1e-6) return `Blur ${i + 1} goes outside the frame.`;
   }
+  for (const [i, z] of e.zooms.entries()) if (z.srcEnd <= z.srcStart) return `Zoom ${i + 1} ends before it starts.`;
   if (outputDuration(e) < 1) return "The edited video must be at least 1 second long.";
   return null;
 }

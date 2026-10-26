@@ -12,7 +12,7 @@ import { findProject } from "@/server/queries";
 import { runStudioRender } from "@/server/jobs/studio-render";
 import { runStudioJob } from "@/server/jobs/studio-jobs";
 import { localSpeechEnabled } from "@/lib/services/local/speech";
-import { expireStaleStudioJobs, studioEnabled, studioSource } from "@/server/studio";
+import { expireStaleStudioJobs, latestClassicRender, startEdl, STUDIO_JOB_KINDS, studioEnabled, studioSource, type StudioJobKind } from "@/server/studio";
 import { run, type ActionResult } from "./result";
 
 const LOCKED = ["processing", "sme-review", "approval-pending", "compliance-review"];
@@ -55,7 +55,7 @@ export async function startStudioRender(input: { projectId: string; captions: bo
   return run(async () => {
     const { s, p } = await editableProject(z.string().cuid().parse(input.projectId));
     enforceRate("render", s.user.id);
-    if (!(await studioSource(p.id))) throw new AppError("INVALID_STATE", "Studio renders recordings and videos only.");
+    if (!(await studioSource(p.id))) throw new AppError("INVALID_STATE", "Studio needs a video: render this project on the Video tab first.");
     const row = await db.studioEdit.findUnique({ where: { projectId: p.id } });
     if (!row) throw new AppError("INVALID_STATE", "Open Studio again to start editing.");
     const busy = await db.renderJob.findFirst({ where: { projectId: p.id, status: { in: ["queued", "running"] } } });
@@ -69,19 +69,19 @@ export async function startStudioRender(input: { projectId: string; captions: bo
   });
 }
 
-/** Starts a Studio background job: word timings for text editing, or finding personal data on screen. */
-export async function startStudioJob(input: { projectId: string; kind: "words" | "pii" }): Promise<ActionResult<{ jobId: string }>> {
+/** Starts a Studio background job: word timings for text editing, finding personal data on screen, or automatic zooms. */
+export async function startStudioJob(input: { projectId: string; kind: StudioJobKind }): Promise<ActionResult<{ jobId: string }>> {
   return run(async () => {
     const { s, p } = await editableProject(z.string().cuid().parse(input.projectId));
-    const kind = z.enum(["words", "pii"]).parse(input.kind);
+    const kind = z.enum(STUDIO_JOB_KINDS).parse(input.kind);
     enforceRate("ai", s.user.id);
-    if (!(await studioSource(p.id))) throw new AppError("INVALID_STATE", "Studio works with recordings and videos only.");
+    if (!(await studioSource(p.id))) throw new AppError("INVALID_STATE", "Studio needs a video: render this project on the Video tab first.");
     if (kind === "words" && !localSpeechEnabled()) throw new AppError("INVALID_STATE", "Speech recognition is switched off on this server (SPEECH_PROVIDER=off).");
     await expireStaleStudioJobs(p.id);
     const busy = await db.studioJob.findFirst({ where: { projectId: p.id, kind, status: { in: ["queued", "running"] } } });
     if (busy) return { jobId: busy.id };
     const job = await db.studioJob.create({ data: { projectId: p.id, kind, status: "queued", createdById: s.user.id } });
-    await recordAudit(s, { action: "ai.generation.started", resourceType: "project", resourceId: p.id, resourceLabel: `${p.title} · Studio ${kind === "words" ? "word timings" : "personal data detection"}`, resourceVersion: p.currentVersion });
+    await recordAudit(s, { action: "ai.generation.started", resourceType: "project", resourceId: p.id, resourceLabel: `${p.title} · Studio ${{ words: "word timings", pii: "personal data detection", zoom: "automatic zoom" }[kind]}`, resourceVersion: p.currentVersion });
     after(() => runStudioJob(job.id));
     return { jobId: job.id };
   });
@@ -97,9 +97,29 @@ export async function studioStatus(projectId: string): Promise<ActionResult<{ re
     await expireStaleStudioJobs(p.id);
     const [row, jobs] = await Promise.all([
       db.studioEdit.findUnique({ where: { projectId: p.id } }),
-      Promise.all(["words", "pii"].map((kind) => db.studioJob.findFirst({ where: { projectId: p.id, kind }, orderBy: { createdAt: "desc" } }))),
+      Promise.all(STUDIO_JOB_KINDS.map((kind) => db.studioJob.findFirst({ where: { projectId: p.id, kind }, orderBy: { createdAt: "desc" } }))),
     ]);
     if (!row) throw new AppError("INVALID_STATE", "Open Studio again to start editing.");
     return { revision: row.revision, edl: edlSchema.parse(JSON.parse(row.edl)), jobs: jobs.filter((j) => j !== null).map((j) => ({ kind: j.kind, status: j.status, detail: j.detail })) };
+  });
+}
+
+/**
+ * Audio and document projects: Studio edits a Video tab render, pinned when the edit started. This
+ * moves the edit onto the newest Video tab render instead, starting a fresh edit (the old one's
+ * cuts and boxes belonged to the old video's timing). Confirmed in the editor before it's called.
+ */
+export async function switchToLatestVideoRender(input: { projectId: string }): Promise<ActionResult<{ revision: number }>> {
+  return run(async () => {
+    const { s, p } = await editableProject(z.string().cuid().parse(input.projectId));
+    const media = await studioSource(p.id);
+    if (media?.kind !== "render") throw new AppError("INVALID_STATE", "This project's Studio edits its own recording.");
+    const latest = await latestClassicRender(p.id);
+    if (!latest?.outputKey) throw new AppError("INVALID_STATE", "There's no Video tab render to use.");
+    const started = await startEdl(p.id, s.user.id, { ...media, id: latest.id, storageKey: latest.outputKey });
+    if (!started) throw new AppError("INVALID_STATE", "That render's length couldn't be read.");
+    await recordAudit(s, { action: "content.edited", resourceType: "project", resourceId: p.id, resourceLabel: `${p.title} · Studio now edits the Video tab render of v${latest.version}`, resourceVersion: p.currentVersion });
+    revalidatePath(`/projects/${p.id}/studio`);
+    return { revision: started.revision };
   });
 }

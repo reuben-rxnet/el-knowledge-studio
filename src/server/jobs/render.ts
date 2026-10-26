@@ -83,11 +83,14 @@ export async function runRender(jobId: string) {
 
     const recording = isMediaSource(p.sourceKind) && source && isMediaSource(source.kind);
     const out = path.join(dir, "out.mp4");
+    // The captions as they appear in this video, kept with the render so Studio can edit it later.
+    let shownCues: { start: number; end: number; text: string; ref: string }[] = [];
     if (recording) {
       // 2a. Recording: captions + blur over the real video.
       await progress(job.id, "Rendering the recording with captions and redactions");
       await withLocalFile(source.storageKey, async (input) => {
-        await writeFile(path.join(dir, "captions.srt"), srt(script.map((s, i) => ({ start: s.startSec, end: s.endSec, text: text(i) }))), "utf8");
+        shownCues = script.map((s, i) => ({ start: s.startSec, end: s.endSec, text: text(i), ref: s.id }));
+        await writeFile(path.join(dir, "captions.srt"), srt(shownCues), "utf8");
         const blurs = scenes.filter((s) => s.redaction).map((s) => `boxblur=20:2:enable='between(t,${s.startSec},${s.endSec})'`);
         const style = "FontName=Segoe UI,FontSize=20,PrimaryColour=&H00FFFFFF,BackColour=&H80000000,BorderStyle=4,Outline=0,MarginV=28";
         const vf = [`scale=-2:${H}`, ...blurs, `subtitles=captions.srt:force_style='${style}'`].join(",");
@@ -162,6 +165,7 @@ export async function runRender(jobId: string) {
           { file: `c-${i}-b.txt`, size: 30, y: "290", color: "0xDCE3EA" },
         ], useVoice ? `voice-${Math.min(i, clipSec.length - 1)}.wav` : undefined);
         cues.push({ start: t, end: t + seconds, text: body });
+        shownCues.push({ start: t, end: t + seconds, text: body, ref: script[Math.min(i, script.length - 1)]!.id });
         t += seconds;
       }
       await progress(job.id, "Joining chapters into one video");
@@ -176,7 +180,7 @@ export async function runRender(jobId: string) {
     await saveFile(key, buf, "video/mp4");
     const durationSec = Math.round(await mediaDurationSec(out));
     await db.$transaction([
-      db.renderJob.update({ where: { id: job.id }, data: { status: "succeeded", detail: "Done", outputKey: key, durationSec, sizeBytes: (await stat(out)).size, completedAt: new Date() } }),
+      db.renderJob.update({ where: { id: job.id }, data: { status: "succeeded", detail: "Done", outputKey: key, durationSec, sizeBytes: (await stat(out)).size, completedAt: new Date(), cues: JSON.stringify(shownCues), burnedCaptions: !!recording } }),
       db.notification.create({ data: { userId: job.createdById, kind: "render.completed", title: "Video rendered", body: `${p.title} v${job.version} (${job.language}) is ready to watch and download.`, href: `/projects/${p.id}/video` } }),
       db.auditEvent.create({ data: { actorId: job.createdById, actorName: "EL Knowledge Studio (system)", action: "video.rendered", resourceType: "project", resourceId: p.id, resourceLabel: `${p.title} · MP4 ${job.language}${useVoice ? " · AI voice" : ""}`, resourceVersion: job.version, workspaceId: p.workspaceId, outcome: "success", correlationId: job.id } }),
     ]);

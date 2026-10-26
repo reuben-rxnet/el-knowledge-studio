@@ -1,6 +1,8 @@
 import "server-only";
 import { db } from "@/lib/database/client";
 import { normaliseLimits, type UploadLimits } from "@/lib/validation/upload-limits";
+import { normaliseBrandTemplate, type BrandTemplate } from "@/lib/studio/brand-template";
+import { BUILT_IN_MUSIC, uploadedTrackUrl, type MusicTrack, type StoredTrack } from "@/lib/studio/music";
 
 const UPLOAD_LIMITS_KEY = "upload.limits";
 
@@ -48,4 +50,36 @@ export async function piiCodexEnabled(): Promise<boolean> {
 export async function storePiiCodex(enabled: boolean, userId: string) {
   const value = JSON.stringify(enabled);
   await db.appSetting.upsert({ where: { key: PII_CODEX_KEY }, create: { key: PII_CODEX_KEY, value, updatedById: userId }, update: { value, updatedById: userId } });
+}
+
+const BRAND_KEY = "studio.brand";
+
+/** Studio's brand template (Brand Center): the stored values over the defaults. */
+export async function getBrandTemplate(): Promise<BrandTemplate> {
+  const row = await db.appSetting.findUnique({ where: { key: BRAND_KEY } });
+  try { return normaliseBrandTemplate(row ? JSON.parse(row.value) : null); } catch { return normaliseBrandTemplate(null); }
+}
+
+export async function storeBrandTemplate(t: BrandTemplate, userId: string) {
+  const value = JSON.stringify(t);
+  await db.appSetting.upsert({ where: { key: BRAND_KEY }, create: { key: BRAND_KEY, value, updatedById: userId }, update: { value, updatedById: userId } });
+}
+
+const MUSIC_KEY = "studio.music";
+
+/** Music tracks a brand administrator uploaded (company-licensed); the built-in ones are in lib/studio/music.ts. */
+export async function getUploadedMusic(): Promise<StoredTrack[]> {
+  const row = await db.appSetting.findUnique({ where: { key: MUSIC_KEY } });
+  try { const v = row ? (JSON.parse(row.value) as StoredTrack[]) : []; return Array.isArray(v) ? v : []; } catch { return []; }
+}
+
+export async function storeUploadedMusic(list: StoredTrack[], userId: string) {
+  const value = JSON.stringify(list);
+  await db.appSetting.upsert({ where: { key: MUSIC_KEY }, create: { key: MUSIC_KEY, value, updatedById: userId }, update: { value, updatedById: userId } });
+}
+
+/** Every track a Studio edit can choose: built in first, then uploaded. */
+export async function musicLibrary(): Promise<MusicTrack[]> {
+  const uploaded = await getUploadedMusic();
+  return [...BUILT_IN_MUSIC, ...uploaded.map((t) => ({ id: t.id, title: t.title, note: t.licence, builtIn: false, url: uploadedTrackUrl(t.id) }))];
 }

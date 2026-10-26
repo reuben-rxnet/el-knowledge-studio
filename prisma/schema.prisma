@@ -139,6 +139,8 @@ model ProjectVersion {
   number      Int
   status      String
   note        String
+  snapshot    String?  // JSON copy of the content at approval (guide steps, FAQs, script, translations), so it can be published while the next version is edited
+  officialRenderId String? // the rendered video chosen to publish with this version (Video tab or Studio)
   createdAt   DateTime @default(now())
   createdById String
   project     Project  @relation(fields: [projectId], references: [id])
@@ -302,6 +304,7 @@ model PublishingJob {
   simulated   Boolean  @default(true)
   requireAck  Boolean  @default(false)
   watermark   Boolean  @default(false)
+  renderId    String?  // the video published with it (the version's official render)
   createdAt   DateTime @default(now())
   createdById String
   project     Project  @relation(fields: [projectId], references: [id])
@@ -449,6 +452,11 @@ model RenderJob {
   voice       String?
   engine      String    @default("classic") // classic (Video tab) | studio (Studio beta)
   captions    Boolean   @default(true) // Studio: burn captions in
+  cues        String?   // JSON caption cues as shown in this video (output time), for Studio editing a Video tab render
+  burnedCaptions Boolean @default(false) // the captions are part of the picture
+  words       String?   // JSON spoken words with times, when Studio edits this render (audio and document projects)
+  chapters    String?   // JSON [{ start, end, title }] in the video's time
+  captionTracks String? // JSON [{ language, key }]: WebVTT files stored with this render, one per language
   detail      String    @default("Queued")
   outputKey   String?
   durationSec Int?
@@ -489,15 +497,16 @@ model StudioEdit {
   projectId   String   @id
   edl         String
   revision    Int      @default(1) // bumped on every save; a stale save is refused
+  baseRenderId String?           // audio and document projects: the Video tab render Studio edits (pinned, so the edit keeps matching it)
   updatedAt   DateTime @updatedAt
   updatedById String
 }
 
-/// Studio (beta) background work: "words" (word timings for text editing) and "pii" (find personal data on screen).
+/// Studio (beta) background work: "words" (word timings for text editing), "pii" (find personal data on screen), "zoom" (automatic zooms).
 model StudioJob {
   id          String    @id @default(cuid())
   projectId   String
-  kind        String    // words | pii
+  kind        String    // words | pii | zoom
   status      String    // queued | running | succeeded | failed
   detail      String    @default("Queued")
   createdById String
