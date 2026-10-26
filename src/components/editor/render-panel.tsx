@@ -3,9 +3,10 @@ import { useEffect, useState, useTransition } from "react";
 import { Clapperboard, Download } from "lucide-react";
 import { startRender } from "@/server/actions/render";
 import { TonePill } from "@/components/common/badges";
+import { OfficialRenderButton } from "./official-render-button";
 import { useToast } from "@/components/common/toast";
 
-interface Render { id: string; status: string; detail: string; language: string; aiVoice: boolean; version: number; durationSec: number | null; sizeBytes: number | null }
+interface Render { id: string; status: string; detail: string; language: string; aiVoice: boolean; version: number; durationSec: number | null; sizeBytes: number | null; official: boolean; choosable: boolean }
 
 /** Render a finished MP4 on the server (FFmpeg + optional open-source AI voice), then watch or download it. */
 export function RenderPanel({ projectId, languages, voices, voiceLanguages, canRender, hasRecording }: {
@@ -19,6 +20,7 @@ export function RenderPanel({ projectId, languages, voices, voiceLanguages, canR
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const [tick, setTick] = useState(0);
+  const [canChoose, setCanChoose] = useState(false);
   const voiceOk = voiceLanguages.includes(lang);
   const running = renders.some((r) => r.status === "queued" || r.status === "running");
   const latest = renders.find((r) => r.status === "succeeded");
@@ -29,8 +31,9 @@ export function RenderPanel({ projectId, languages, voices, voiceLanguages, canR
     const load = async () => {
       const res = await fetch(`/api/projects/${projectId}/render`, { cache: "no-store" }).catch(() => null);
       if (res?.ok && !stop) {
-        const body = (await res.json()) as { renders: Render[] };
+        const body = (await res.json()) as { renders: Render[]; canChoose: boolean };
         setRenders(body.renders);
+        setCanChoose(body.canChoose);
         if (body.renders.some((r) => r.status === "queued" || r.status === "running")) timer = setTimeout(load, 2000);
       }
     };
@@ -72,7 +75,10 @@ export function RenderPanel({ projectId, languages, voices, voiceLanguages, canR
                 <span className="t">v{r.version} · {r.language.toUpperCase()}{r.aiVoice ? " · AI voice" : ""}</span>
                 <span className="meta" style={{ display: "block" }} aria-live="polite">{r.status === "succeeded" ? `${r.durationSec ?? "?"} s · ${((r.sizeBytes ?? 0) / 1048576).toFixed(1)} MB` : r.detail}</span>
               </div>
-              {r.status === "succeeded" ? <a className="btn sm" href={`/api/projects/${projectId}/render?file=${r.id}&download=1`}><Download size={14} aria-hidden /> MP4</a>
+              {r.status === "succeeded" ? <div className="row" style={{ gap: 6 }}>
+                {canChoose && (r.choosable || r.official) ? <OfficialRenderButton projectId={projectId} renderId={r.id} official={r.official} onChanged={() => setTick((t) => t + 1)} /> : r.official ? <TonePill tone="ok">Chosen for publishing</TonePill> : null}
+                <a className="btn sm" href={`/api/projects/${projectId}/render?file=${r.id}&download=1`}><Download size={14} aria-hidden /> MP4</a>
+              </div>
                 : <TonePill tone={r.status === "failed" ? "err" : "info"}>{r.status === "failed" ? "Failed" : "Rendering"}</TonePill>}
             </li>
           ))}

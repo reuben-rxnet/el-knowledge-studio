@@ -81,7 +81,7 @@ export default async function ProjectOverview({ params }: { params: Promise<{ id
             {versions.map((v) => (
               <li key={v.id} style={{ padding: "8px 0" }}>
                 <b>v{v.number}</b>
-                <span className="meta" style={{ flex: 1 }}>{v.note} · {relativeTime(v.createdAt)}</span>
+                <span className="meta" style={{ flex: 1 }}>{v.note} · {relativeTime(v.createdAt)}{v.snapshot ? " · Snapshot saved" : ""}</span>
                 {v.number === p.publishedVersion ? <TonePill tone="ok">Live</TonePill> : v.number === p.approvedVersion ? <TonePill tone="ok">Approved</TonePill> : v.number === p.currentVersion ? <TonePill tone="info">Current</TonePill> : null}
               </li>
             ))}

@@ -81,7 +81,16 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
 resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
   parent: storage
   name: 'default'
-  properties: { deleteRetentionPolicy: { enabled: true, days: 30 }, containerDeleteRetentionPolicy: { enabled: true, days: 30 } }
+  properties: {
+    deleteRetentionPolicy: { enabled: true, days: 30 }
+    containerDeleteRetentionPolicy: { enabled: true, days: 30 }
+    // Direct uploads: the browser PUTs blocks to a short-lived SAS URL (src/app/api/uploads/direct). Only the app's origin.
+    cors: {
+      corsRules: [
+        { allowedOrigins: [ appBaseUrl ], allowedMethods: [ 'PUT', 'OPTIONS' ], allowedHeaders: [ 'content-type', 'x-ms-*' ], exposedHeaders: [ 'x-ms-*', 'etag' ], maxAgeInSeconds: 3600 }
+      ]
+    }
+  }
 }
 
 resource mediaContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
@@ -194,6 +203,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
 // Least-privilege roles for the app's managed identity.
 var roles = {
   blobDataContributor: 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+  blobDelegator: 'db58b8e5-c6ad-4a2a-8342-4190687cbf4a'
   keyVaultSecretsUser: '4633458b-17de-408a-b874-0445c86b69e6'
   acrPull: '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 }
@@ -202,6 +212,14 @@ resource blobRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: storage
   name: guid(storage.id, app.id, roles.blobDataContributor)
   properties: { principalId: app.identity.principalId, principalType: 'ServicePrincipal', roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.blobDataContributor) }
+}
+
+// Direct uploads: the app signs short-lived upload links with a user delegation key (shared keys stay disabled).
+// Blob Data Contributor already allows that; the explicit Delegator role keeps it working if that role is narrowed.
+resource blobDelegatorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: storage
+  name: guid(storage.id, app.id, roles.blobDelegator)
+  properties: { principalId: app.identity.principalId, principalType: 'ServicePrincipal', roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.blobDelegator) }
 }
 
 resource vaultRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {

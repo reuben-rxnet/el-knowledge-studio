@@ -2,7 +2,7 @@
 // re-encoded, so cuts land on the exact frame), then the segments are joined without re-encoding and
 // a last pass adds music, AI voice, soft subtitles and chapters. Rendering clip by clip keeps memory
 // flat however long the recording is.
-import { baseView, clipBlurs, clipZooms, FPS, OUTPUT_SIZE, ZOOM_RAMP_SEC, type Edl } from "./edl";
+import { baseView, clipBlurs, clipZooms, FPS, OUTPUT_SIZE, toOutput, ZOOM_RAMP_SEC, type Cue, type Edl } from "./edl";
 
 /** The 16:9 size; other shapes are in OUTPUT_SIZE. */
 export const OUT_W = 1280, OUT_H = 720;
@@ -188,3 +188,16 @@ export function ffmetadataChapters(chapters: { start: number; end: number; title
 /** Kept for the unit tests and older callers: loudness only, the picture copied. */
 export const normalizeArgs = (input: string, output: string) =>
   ["-i", input, "-map", "0:v", "-map", "0:a", "-c:v", "copy", "-af", "loudnorm=I=-16:TP=-1.5:LRA=11", "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-movflags", "+faststart", output];
+
+/**
+ * Where each AI voice paragraph goes in the output: it starts where its caption starts in the edit
+ * (after the intro, `offset`), and has until the next one starts (or the end) to finish. Captions on
+ * cut material are left out.
+ */
+export function voicePlacement(e: Edl, cues: Cue[], offset: number, total: number): { at: number; text: string; slot: number }[] {
+  const placed = cues.flatMap((c) => { const r = toOutput(e, c.start, c.end)[0]; return r ? [{ at: r.start + offset, text: c.text }] : []; }).sort((a, b) => a.at - b.at);
+  return placed.map((p, k) => ({ ...p, slot: Math.max(0.8, (placed[k + 1]?.at ?? total) - p.at - 0.15) }));
+}
+
+/** A paragraph longer than its slot is spoken faster to fit, but never above 1.35x (still easy to follow). */
+export const voiceSpeed = (seconds: number, slot: number) => (seconds > slot ? Math.min(1.35, seconds / slot) : 1);

@@ -21,6 +21,7 @@ const ACTIVITY_TEMPLATES: Record<string, (actor: string, v: number | null) => st
   "approval.rejected": (a, v) => `${a} requested changes to version ${v}.`,
   "content.published": (a, v) => `${a} published version ${v}.`,
   "content.downloaded": (a) => `${a} tried to download the content.`,
+  "video.chosen": (a, v) => `${a} chose the video to publish with version ${v}.`,
 };
 
 export default async function ActivityTab({ params }: { params: Promise<{ id: string }> }) {

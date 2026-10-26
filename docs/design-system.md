@@ -23,15 +23,21 @@ A dark palette is defined for `prefers-color-scheme: dark`.
 
 ## Type
 
-Segoe UI Variable → Segoe UI → Inter → Arial. Page title 30px, section 20px, card 16px, body 14–15px, metadata 12.5px. Hero 46px.
+Segoe UI Variable → Segoe UI → Inter → Arial for text; headings use `--font-display` (Segoe UI Variable Display). Page title 32px, section 21px, card 16px, body 14–15px, metadata 12.5px. Hero 46px with a white-to-cyan-to-gold gradient fill.
 
 ## Shape and spacing
 
-4px base and 8px increments. Card radius 12px, controls 8px. Two shadows (`--shadow-1` rest, `--shadow-2` lifted).
+4px base and 8px increments. Card radius 14px, controls 10px. Shadows: `--shadow-1` (rest), `--shadow-2` (lifted), `--shadow-glow` (primary hover); `--hairline` gives surfaces a 1px top highlight. Gradients: `--grad-primary` (primary buttons), `--grad-accent` (active tabs, eyebrows, KPI strips).
 
 ## Visual language
 
-The lens motif (radial highlight inside an ellipse) appears in the product mark, hero illustration, creation cards, template art and empty states. The processing journey uses a gold-to-cyan "light path" beam. Glass effects are limited to the hero.
+The lens motif (radial highlight inside an ellipse) appears in the product mark, hero illustration, creation cards, template art and empty states. The processing journey uses a gold-to-cyan "light path" beam. The app background carries a faint "aurora" (`--aurora`: cyan, blue and gold radial washes); the hero and sign-in panel have slowly drifting light orbs. The top bar, menus and toasts are frosted glass.
+
+**Corporate logo.** The EssilorLuxottica wordmark (from the approved asset pack shared with Knowzy, copied unchanged to `public/brand/`) appears only as an endorsement: "by EssilorLuxottica" under the product mark, on the sign-in page and in the footer. `tests/unit/brand.test.ts` checks the inlined mark still matches the file. The palette is the application's own and has **not** been verified against the corporate brand portal.
+
+## Studio
+
+Studio is a dark, pro editing workspace inside the light app: `.studio` redefines the tokens (surfaces, borders, text, action blue #4C9BFF, cyan #22C3EE), so every card, field and button inside it switches over. Layout: header (product, save status, undo/redo, Export), the stage with a heads-up shape/zoom chip and a transport bar (tools, round play button, monospace timecode), a tabbed inspector (Edit, Assist, Style, Audio; selecting an item shows Edit), and a timeline with a filmstrip on the video track, the waveform on the sound track, trapezoid zoom blocks that show their ease in and out, gold chapter flags and a glowing playhead. Busy tracks get thinner lanes. Tool labels show only when the transport is wide (container query).
 
 ## Patterns
 
@@ -39,4 +45,4 @@ The lens motif (radial highlight inside an ellipse) appears in the product mark,
 - **AI content** uses the violet `ai-label`. **Simulated** integrations use the amber `mock-label`.
 - **Classification** is an outlined uppercase tag with a lock icon.
 - **Empty states**: icon, a title that names the situation, one sentence on what to do next, and an optional action.
-- **Motion**: 150–250ms transitions, card lift on hover. All animation is disabled under `prefers-reduced-motion`.
+- **Motion**: 150–250ms transitions, card lift on hover, page sections rise in with a short stagger. All animation is disabled under `prefers-reduced-motion`.

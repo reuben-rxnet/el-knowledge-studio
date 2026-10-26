@@ -3,7 +3,10 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { db } from "@/lib/database/client";
 import { languageLabel } from "@/lib/domain/constants";
+import { parseSnapshot } from "@/lib/domain/version-snapshot";
+import { parseChapters, type RenderChapter } from "@/lib/studio/render-meta";
 import { AppError } from "@/lib/utilities/errors";
+import { mmss } from "@/lib/utilities/format";
 import type { PublishingConnector } from "./interfaces";
 
 /**
@@ -30,6 +33,8 @@ export interface KnowzyGuide {
   approvedAt: Date;
   steps: { chapter: string; title: string; instruction: string; expectedResult: string | null; warning: string | null; tip: string | null }[];
   faqs: { question: string; answer: string }[];
+  /** The video chosen for publishing with this version (ProjectVersion.officialRenderId), if any. */
+  video?: { renderId: string; durationSec: number; chapters: RenderChapter[] };
 }
 
 /** One line of Markdown text: no line breaks, and nothing that turns into a heading or list by accident. */
@@ -55,6 +60,11 @@ export function knowzyMarkdown(g: KnowzyGuide): string {
     if (s.warning) out.push(`> **Warning:** ${inline(s.warning)}`, "");
     if (s.tip) out.push(`**Tip:** ${inline(s.tip)}`, "");
   });
+  if (g.video?.chapters.length) {
+    out.push("## Video chapters", "");
+    for (const c of g.video.chapters) out.push(`- ${mmss(c.start)} ${inline(c.title)}`);
+    out.push("");
+  }
   if (g.faqs.length) {
     out.push("## Frequently asked questions", "");
     for (const f of g.faqs) out.push(`**${inline(f.question)}**`, "", f.answer.trim(), "");
@@ -80,35 +90,73 @@ export function knowzySidecar(g: KnowzyGuide) {
       system: g.sourceSystem,
       audience: g.audience,
       owner: g.owner,
+      ...(g.video ? { video: { renderId: g.video.renderId, durationSec: g.video.durationSec, chapters: g.video.chapters.map((c) => ({ start: c.start, end: c.end, title: c.title })) } } : {}),
     },
   };
 }
 
-/** Loads the approved content. Steps aren't stored per version, so a newer draft blocks the export. */
-async function loadGuide(projectId: string, version: number, language: string): Promise<KnowzyGuide> {
+type Step = KnowzyGuide["steps"][number] & { id: string };
+type Translation = { language: string; sourceType: string; sourceId: string; text: string };
+
+/** Only the translated fields; untranslated notes would mix languages, so they're left out. */
+function translateSteps(steps: Step[], segs: Translation[], language: string): Step[] {
+  const t = new Map(segs.filter((x) => x.language === language && (x.sourceType === "step-title" || x.sourceType === "step-instruction")).map((x) => [`${x.sourceType}:${x.sourceId}`, x.text]));
+  return steps.map((s) => ({ ...s, title: t.get(`step-title:${s.id}`) ?? s.title, instruction: t.get(`step-instruction:${s.id}`) ?? s.instruction, expectedResult: null, warning: null, tip: null }));
+}
+
+/**
+ * Loads the approved content. While the approved version is also the current one, the live tables hold
+ * it. Once a newer draft exists, the copy taken at approval (ProjectVersion.snapshot) is used; versions
+ * approved before snapshots existed can't be exported until the new version is approved.
+ */
+export async function loadGuide(projectId: string, version: number, language: string): Promise<KnowzyGuide> {
   const p = await db.project.findUnique({
     where: { id: projectId },
     include: { workspace: true, owner: true, steps: { orderBy: { order: "asc" } }, faqs: true },
   });
   if (!p || p.approvedVersion !== version) throw new AppError("INVALID_STATE", "Only the approved version can be sent to Knowzy.");
-  if (p.currentVersion !== version) throw new AppError("INVALID_STATE", `Version ${p.currentVersion} is being edited, so the approved version ${version} can't be exported to Knowzy. Approve the new version first.`);
-  let steps = p.steps.map((s) => ({ id: s.id, chapter: s.chapter, title: s.title, instruction: s.instruction, expectedResult: s.expectedResult, warning: s.warning, tip: s.tip }));
-  if (language !== p.primaryLanguage) {
-    const tr = await db.translationProject.findUnique({ where: { projectId_language: { projectId, language } } });
-    if (!tr || !["approved", "published"].includes(tr.status)) throw new AppError("INVALID_STATE", `The ${languageLabel(language)} translation isn't approved yet.`);
-    const segs = await db.translationSegment.findMany({ where: { projectId, language, sourceType: { in: ["step-title", "step-instruction"] } } });
-    const t = new Map(segs.map((x) => [`${x.sourceType}:${x.sourceId}`, x.text]));
-    // Only the translated fields; untranslated notes would mix languages, so they're left out.
-    steps = steps.map((s) => ({ ...s, title: t.get(`step-title:${s.id}`) ?? s.title, instruction: t.get(`step-instruction:${s.id}`) ?? s.instruction, expectedResult: null, warning: null, tip: null }));
-  }
   const approval = await db.projectVersion.findUnique({ where: { projectId_number: { projectId, number: version } } });
+  const notApproved = () => new AppError("INVALID_STATE", `The ${languageLabel(language)} translation isn't approved yet.`);
+
+  let content: { title: string; description: string; primaryLanguage: string; steps: Step[]; faqs: KnowzyGuide["faqs"] };
+  if (p.currentVersion === version) {
+    content = {
+      title: p.title, description: p.description, primaryLanguage: p.primaryLanguage, faqs: p.faqs.map((f) => ({ question: f.question, answer: f.answer })),
+      steps: p.steps.map((s) => ({ id: s.id, chapter: s.chapter, title: s.title, instruction: s.instruction, expectedResult: s.expectedResult, warning: s.warning, tip: s.tip })),
+    };
+    if (language !== p.primaryLanguage) {
+      const tr = await db.translationProject.findUnique({ where: { projectId_language: { projectId, language } } });
+      if (!tr || !["approved", "published"].includes(tr.status)) throw notApproved();
+      const segs = await db.translationSegment.findMany({ where: { projectId, language, sourceType: { in: ["step-title", "step-instruction"] } } });
+      content.steps = translateSteps(content.steps, segs, language);
+    }
+  } else {
+    const snap = parseSnapshot(approval?.snapshot);
+    if (!snap) throw new AppError("INVALID_STATE", `Version ${p.currentVersion} is being edited, so the approved version ${version} can't be exported to Knowzy. Approve the new version first.`);
+    content = {
+      title: snap.title, description: snap.description, primaryLanguage: snap.primaryLanguage, faqs: snap.faqs,
+      steps: [...snap.steps].sort((a, b) => a.order - b.order).map((s) => ({ id: s.id, chapter: s.chapter, title: s.title, instruction: s.instruction, expectedResult: s.expectedResult, warning: s.warning, tip: s.tip })),
+    };
+    if (language !== snap.primaryLanguage) {
+      if (!snap.approvedLanguages.includes(language)) throw new AppError("INVALID_STATE", `The ${languageLabel(language)} translation wasn't approved when version ${version} was approved.`);
+      content.steps = translateSteps(content.steps, snap.translations, language);
+    }
+  }
   return {
-    projectId: p.id, title: p.title, description: p.description, version, language, classification: p.classification,
+    projectId: p.id, title: content.title, description: content.description, version, language, classification: p.classification,
     workspace: { slug: p.workspace.slug, name: p.workspace.name },
     businessFunction: p.businessFunction, processCategory: p.processCategory, sourceSystem: p.sourceSystem, audience: p.audience,
     owner: p.owner.displayName, approvedAt: p.lastReviewedAt ?? approval?.createdAt ?? new Date(),
-    steps, faqs: language === p.primaryLanguage ? p.faqs.map((f) => ({ question: f.question, answer: f.answer })) : [],
+    steps: content.steps, faqs: language === content.primaryLanguage ? content.faqs : [],
+    video: await officialVideo(projectId, approval?.officialRenderId ?? null),
   };
+}
+
+/** The video chosen for publishing with this version, if it is still there. */
+async function officialVideo(projectId: string, renderId: string | null): Promise<KnowzyGuide["video"]> {
+  if (!renderId) return undefined;
+  const r = await db.renderJob.findFirst({ where: { id: renderId, projectId, status: "succeeded" }, select: { id: true, durationSec: true, chapters: true } });
+  return r ? { renderId: r.id, durationSec: r.durationSec ?? 0, chapters: parseChapters(r.chapters) } : undefined;
 }
 
 /** Writes via a temporary name Knowzy ignores, then renames, so a sync never reads half a file. */

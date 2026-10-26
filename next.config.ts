@@ -11,7 +11,10 @@ const csp = [
   "img-src 'self' data: blob:",
   "media-src 'self' blob:",
   "font-src 'self' data:",
-  "connect-src 'self'",
+  // Direct uploads (STORAGE_PROVIDER=azure-blob) PUT the file straight to Blob storage. Headers are fixed at
+  // build time, so pin the account with CSP_BLOB_ORIGIN (e.g. https://<account>.blob.core.windows.net) when
+  // building the image; otherwise any Azure Blob endpoint is allowed. Development: the Azurite emulator.
+  `connect-src 'self' ${process.env.CSP_BLOB_ORIGIN?.trim() || (isDev ? "http://127.0.0.1:10000 http://localhost:10000" : "https://*.blob.core.windows.net")}`,
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",

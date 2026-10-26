@@ -5,6 +5,8 @@ import { requirePageSession } from "@/lib/auth/session";
 import { TonePill } from "@/components/common/badges";
 import { EmptyState } from "@/components/common/empty-state";
 import { PageHeader } from "@/components/common/page-header";
+import { StudioBrandEditor, StudioMusicLibrary } from "@/components/brand/studio-brand-editor";
+import { getBrandTemplate, getUploadedMusic } from "@/server/settings";
 
 export const metadata: Metadata = { title: "Brand Center" };
 
@@ -13,7 +15,7 @@ const ASSETS: [string, string, boolean][] = [
   ["Product mark", "EL Knowledge Studio's own mark (lens and name). Stays the application's identity.", true],
   ["Colour theme", "EL Enterprise · navy, action blue, cyan, gold", true],
   ["Typography", "Segoe UI Variable with Inter and Arial fallbacks", true],
-  ["Intro and outro sequences", "Not uploaded yet", false],
+  ["Intro and outro sequences", "Studio's intro and outro cards, generated from the brand template below. Video intros from the brand portal are not uploaded yet.", true],
   ["Watermarks", "Classification label watermark (generated)", true],
   ["Document header and footer", "SOP header with owner, version and review date", true],
   ["Disclaimer blocks", "AI-generated content disclaimer", true],
@@ -25,9 +27,15 @@ export default async function BrandCenter() {
   if (!s.permissions.has("brand.manage")) {
     return <section><div className="card"><EmptyState icon={Lock} title="Brand Center is for brand administrators" action={<Link className="btn" href="/">Back to Home</Link>}>It needs the brand.manage permission. In the demo, switch persona to Enterprise administrator.</EmptyState></div></section>;
   }
+  const [template, music] = await Promise.all([getBrandTemplate(), getUploadedMusic()]);
   return (
     <section>
       <PageHeader title="Brand Center" subtitle="Approved, versioned brand assets applied to every video and document." />
+      <div style={{ display: "grid", gap: 16, marginBottom: 16 }}>
+        <StudioBrandEditor template={template} />
+        {/* Storage keys stay on the server; the browser only needs what it shows. */}
+        <StudioMusicLibrary uploaded={music.map((t) => ({ id: t.id, title: t.title, licence: t.licence, uploadedBy: t.uploadedBy, uploadedAt: t.uploadedAt }))} />
+      </div>
       <div className="grid g3">
         {ASSETS.map(([n, d, ok]) => <div key={n} className="card pad"><h2 className="card-h">{n}</h2><p className="meta" style={{ margin: "4px 0 10px" }}>{d}</p><TonePill tone={ok ? "ok" : "warn"}>{ok ? "Approved" : "Needs an approved asset"}</TonePill></div>)}
       </div>

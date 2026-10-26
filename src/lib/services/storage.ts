@@ -1,12 +1,13 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import path from "node:path";
-import type { ContainerClient } from "@azure/storage-blob";
+import type { BlobServiceClient, ContainerClient } from "@azure/storage-blob";
+import type { UploadSigner } from "./blob-sas";
 
 /**
  * File storage for uploads, recordings, screenshots and rendered videos.
@@ -41,6 +42,7 @@ function localPath(key: string) {
 // --- Azure Blob ---------------------------------------------------------------------------
 
 let container: Promise<ContainerClient> | null = null;
+let blobServiceClient: BlobServiceClient | null = null;
 function blobContainer(): Promise<ContainerClient> {
   container ??= (async () => {
     const { BlobServiceClient } = await import("@azure/storage-blob");
@@ -55,6 +57,7 @@ function blobContainer(): Promise<ContainerClient> {
       const { DefaultAzureCredential } = await import("@azure/identity");
       service = new BlobServiceClient(url, new DefaultAzureCredential());
     }
+    blobServiceClient = service;
     const c = service.getContainerClient(name);
     // Azure creates the container in infra (Bicep); the emulator needs it created here. Always private.
     if (conn) await c.createIfNotExists();
@@ -64,6 +67,38 @@ function blobContainer(): Promise<ContainerClient> {
 }
 const blob = async (key: string) => { const name = checkKey(key); return (await blobContainer()).getBlockBlobClient(name); };
 const isNotFound = (e: unknown) => !!e && typeof e === "object" && "statusCode" in e && (e as { statusCode: number }).statusCode === 404;
+
+/** Blob storage is on: large uploads can go straight from the browser to the container. */
+export const directUploadsAvailable = () => provider() === "azure-blob";
+
+// A user delegation key is valid for hours; one is reused for many SAS URLs instead of asking Entra each time.
+let delegation: { key: Awaited<ReturnType<BlobServiceClient["getUserDelegationKey"]>>; until: number } | null = null;
+
+/**
+ * A short-lived URL the browser can only write one new blob with (exactly `key`). In Azure it is signed
+ * with a user delegation key from the managed identity (shared keys stay disabled); with the Azurite
+ * emulator (AZURE_STORAGE_CONNECTION_STRING) with the account key.
+ */
+export async function directUploadUrl(key: string, now = new Date()): Promise<{ url: string; expiresOn: Date }> {
+  if (!directUploadsAvailable()) throw new Error("Direct uploads need Blob storage.");
+  const b = await blob(key);
+  const c = await blobContainer();
+  const service = blobServiceClient!;
+  const { signUploadUrl, uploadSasWindow } = await import("./blob-sas");
+  const { StorageSharedKeyCredential } = await import("@azure/storage-blob");
+  const window = uploadSasWindow(now);
+  let signer: UploadSigner;
+  if (service.credential instanceof StorageSharedKeyCredential) {
+    signer = { kind: "account-key", credential: service.credential };
+  } else {
+    if (!delegation || delegation.until - now.getTime() < 30 * 60_000) {
+      const startsOn = new Date(now.getTime() - 5 * 60_000), expiresOn = new Date(now.getTime() + 6 * 3_600_000);
+      delegation = { key: await service.getUserDelegationKey(startsOn, expiresOn), until: expiresOn.getTime() };
+    }
+    signer = { kind: "user-delegation", key: delegation.key, accountName: service.accountName };
+  }
+  return { url: signUploadUrl(b.url, c.containerName, b.name, window, signer), expiresOn: window.expiresOn };
+}
 
 // --- Operations (same behaviour on both providers) ----------------------------------------
 
@@ -162,4 +197,35 @@ export async function storageReady(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export interface StoredFileInfo { key: string; size: number; modifiedAt: Date }
+
+const isKey = (key: string) => /^[\w-]+\/[\w.-]+$/.test(key) && !key.includes("..");
+
+/**
+ * Every stored file (optionally only keys starting with `prefix`), for the storage clean-up.
+ * Only names that are valid storage keys are listed, so other folders under STORAGE_DIR (such as a
+ * Knowzy export folder) are never touched. Local: the two levels under STORAGE_DIR. Blob: the container.
+ */
+export async function listStoredFiles(prefix = ""): Promise<StoredFileInfo[]> {
+  const out: StoredFileInfo[] = [];
+  if (provider() === "azure-blob") {
+    for await (const b of (await blobContainer()).listBlobsFlat(prefix ? { prefix } : undefined)) {
+      if (isKey(b.name)) out.push({ key: b.name, size: b.properties.contentLength ?? 0, modifiedAt: b.properties.lastModified });
+    }
+    return out;
+  }
+  const dirs = await readdir(ROOT, { withFileTypes: true }).catch(() => []);
+  for (const d of dirs) {
+    if (!d.isDirectory() || !/^[\w-]+$/.test(d.name)) continue;
+    if (prefix && !`${d.name}/`.startsWith(prefix) && !prefix.startsWith(`${d.name}/`)) continue;
+    for (const f of await readdir(path.join(ROOT, d.name), { withFileTypes: true }).catch(() => [])) {
+      const key = `${d.name}/${f.name}`;
+      if (!f.isFile() || !isKey(key) || (prefix && !key.startsWith(prefix))) continue;
+      const s = await stat(path.join(ROOT, d.name, f.name)).catch(() => null);
+      if (s) out.push({ key, size: s.size, modifiedAt: s.mtime });
+    }
+  }
+  return out;
 }

@@ -8,6 +8,7 @@ import { commentSchema, decisionSchema, publishSchema } from "@/lib/validation/s
 import { AppError } from "@/lib/utilities/errors";
 import { recordAudit } from "@/server/audit";
 import { findProject } from "@/server/queries";
+import { takeVersionSnapshot } from "@/server/version-snapshot";
 import { run, type ActionResult } from "./result";
 
 const DAY = 86_400_000;
@@ -122,12 +123,15 @@ export async function decideReview(input: { reviewId: string; expectedVersion: n
       await recordAudit(s, { action: "approval.granted", resourceType: "project", resourceId: p.id, resourceLabel: `${p.title} (SME review)`, resourceVersion: r.version });
     } else {
       status = "approved";
-      await db.$transaction([
-        db.reviewRequest.update({ where: { id: r.id }, data: { status: "approved", decidedAt: new Date() } }),
-        db.project.update({ where: { id: p.id }, data: { status, approvedVersion: r.version, lastReviewedAt: new Date(), nextReviewAt: new Date(Date.now() + p.reviewFrequencyDays * DAY) } }),
-        db.projectVersion.updateMany({ where: { projectId: p.id, number: r.version }, data: { status: "approved" } }),
-        db.notification.create({ data: { userId: p.ownerId, kind: "approval.completed", title: "Approved", body: `${p.title} v${r.version} is approved and ready to publish.`, href: `/projects/${p.id}/publishing` } }),
-      ]);
+      const version = r.version;
+      await db.$transaction(async (tx) => {
+        await tx.reviewRequest.update({ where: { id: r.id }, data: { status: "approved", decidedAt: new Date() } });
+        await tx.project.update({ where: { id: p.id }, data: { status, approvedVersion: version, lastReviewedAt: new Date(), nextReviewAt: new Date(Date.now() + p.reviewFrequencyDays * DAY) } });
+        // The approved content is copied, so this version can still be published once the next one is being edited.
+        const snapshot = JSON.stringify(await takeVersionSnapshot(tx, p.id, version));
+        await tx.projectVersion.updateMany({ where: { projectId: p.id, number: version }, data: { status: "approved", snapshot } });
+        await tx.notification.create({ data: { userId: p.ownerId, kind: "approval.completed", title: "Approved", body: `${p.title} v${version} is approved and ready to publish.`, href: `/projects/${p.id}/publishing` } });
+      });
       await recordAudit(s, { action: "approval.granted", resourceType: "project", resourceId: p.id, resourceLabel: p.title, resourceVersion: r.version });
     }
     revalidatePath(`/projects/${p.id}`, "layout");
@@ -147,13 +151,16 @@ export async function publishProject(input: { projectId: string; version: number
     const blocked = v.destinations.filter((d) => !policy?.destinations.includes(d));
     if (blocked.length) throw new AppError("CLASSIFICATION_BLOCKED", `${p.classification} content can't be published to ${blocked.map(destinationLabel).join(", ")}.`);
 
+    // The video chosen for this version on the Video tab or in Studio (none: the guide is published without one).
+    const row = await db.projectVersion.findUnique({ where: { projectId_number: { projectId: p.id, number: v.version } }, select: { officialRenderId: true } });
+    const video = row?.officialRenderId ? await db.renderJob.findFirst({ where: { id: row.officialRenderId, projectId: p.id, status: "succeeded" }, select: { id: true } }) : null;
     const results = [];
     for (const d of v.destinations) {
       const connector = services.connector(d);
       if (!connector) throw new AppError("INVALID_STATE", `${destinationLabel(d)} isn't connected in this environment.`);
       const target = DESTINATIONS.find((x) => x.key === d)!.target;
       const res = await connector.publish({ projectId: p.id, title: p.title, version: v.version, language: v.language, target, audience: v.audience });
-      await db.publishingJob.create({ data: { projectId: p.id, version: v.version, destination: d, target, language: v.language, audience: v.audience, status: res.status, simulated: res.simulated, requireAck: v.requireAck, watermark: v.watermark, createdById: s.user.id } });
+      await db.publishingJob.create({ data: { projectId: p.id, version: v.version, destination: d, target, language: v.language, audience: v.audience, status: res.status, simulated: res.simulated, requireAck: v.requireAck, watermark: v.watermark, renderId: video?.id ?? null, createdById: s.user.id } });
       await recordAudit(s, { action: "content.published", resourceType: "project", resourceId: p.id, resourceLabel: `${p.title} → ${destinationLabel(d)}${res.simulated ? " (simulated)" : ""}`, resourceVersion: v.version, outcome: res.status === "succeeded" ? "success" : "failure" });
       results.push({ destination: destinationLabel(d), message: res.message, simulated: res.simulated });
     }

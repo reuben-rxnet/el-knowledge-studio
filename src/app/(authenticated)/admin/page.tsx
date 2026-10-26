@@ -16,6 +16,7 @@ import { transcriptionModel } from "@/lib/services/openai/audio";
 import { UploadLimitsForm } from "@/components/admin/upload-limits-form";
 import { getUploadLimits, piiCodexEnabled, uploadCeilingMb, uploadLimitsChange } from "@/server/settings";
 import { PiiCodexToggle } from "@/components/admin/pii-codex-toggle";
+import { StorageCleanup } from "@/components/admin/storage-cleanup";
 import { relativeTime } from "@/lib/utilities/format";
 
 export const metadata: Metadata = { title: "Administration" };
@@ -74,6 +75,7 @@ export default async function AdminPage() {
           <UploadLimitsForm limits={limits} ceilingMb={uploadCeilingMb()} canEdit={s.permissions.has("enterprise.manage")}
             changed={limitsChange ? `Last changed ${relativeTime(limitsChange.at)}${limitsChange.by ? ` by ${limitsChange.by}` : ""}.` : null} />
           <PiiCodexToggle enabled={piiCodex} canEdit={s.permissions.has("enterprise.manage")} />
+          <StorageCleanup canEdit={s.permissions.has("enterprise.manage")} />
           <div className="card pad">
             <h2 className="card-h">Feature flags</h2>
             <dl className="dl">{flags.map((f) => <div key={f.key} style={{ display: "contents" }}><dt>{f.key}</dt><dd>{f.enabled ? "On" : "Off"} · {f.description}</dd></div>)}</dl>

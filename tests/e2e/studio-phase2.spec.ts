@@ -99,9 +99,11 @@ test("Annotations and audio options; personal data on screen is found and blurre
   await page.getByTestId("add-arrow").click();
   await expect(page.getByRole("group", { name: "Annotations" }).getByRole("button")).toHaveCount(2);
   await expect(page.getByTestId("preview-note")).toBeVisible(); // the text callout's handle (arrows have end points)
+  await page.getByTestId("tab-audio").click();
   await page.getByTestId("audio-normalize").check();
   await expect(page.getByTestId("studio-save")).toHaveText("All changes saved", { timeout: 10_000 });
 
+  await page.getByTestId("tab-assist").click();
   await page.getByTestId("find-pii").click();
   const result = page.getByTestId("pii-result");
   await expect(result).toContainText("Blurred", { timeout: 180_000 });

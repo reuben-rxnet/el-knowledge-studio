@@ -1,15 +1,16 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowUpRight, Bookmark, ChevronLeft, ChevronRight, CircleDot, EyeOff, Pause, Play, Redo2, Scissors, ScanFace, Square, Sun, Trash2, Type, Undo2, ZoomIn } from "lucide-react";
+import { ArrowUpRight, AudioLines, Bookmark, Captions, ChevronLeft, ChevronRight, CircleDot, Clapperboard, Clock, EyeOff, Film, Music, Palette, Pause, Play, Redo2, Scissors, ScanFace, SkipBack, SkipForward, SlidersHorizontal, Sparkles, Square, StickyNote, Sun, Trash2, Type, Undo2, ZoomIn } from "lucide-react";
 import {
-  addAnnotation, addBlur, addChapter, addZoom, annotationsAt, baseView, blursAt, clipLength, clipStarts, cutSource, locate, moveClip, outputCues, outputDuration, OUTPUT_SIZE, removeAnnotation, removeBlur, removeChapter, removeClip, removeZoom, setAudio, setSpeed, SPEEDS, splitAt, toOutput, trimClip, updateAnnotation, updateBlur, updateZoom, viewAt, FPS,
+  addAnnotation, addBlur, addChapter, addZoom, annotationsAt, baseView, blursAt, clipLength, clipStarts, cutSource, locate, moveClip, outputCues, outputDuration, OUTPUT_SIZE, removeAnnotation, removeBlur, removeChapter, removeClip, removeZoom, setAudio, setSpeed, SPEEDS, splitAt, toOutput, trimClip, updateAnnotation, updateBlur, updateZoom, viewAt, FPS, ZOOM_RAMP_SEC,
   ANNOTATION_COLORS, type Annotation, type AnnotationColor, type AnnotationKind, type BlurBox, type Cue, type Edl, type Word, type Zoom,
 } from "@/lib/studio/edl";
 import { byDrawOrder, drawAnnotation, type Ctx } from "@/lib/studio/draw-annotations";
 import { drawLowerThird, type BrandCtx } from "@/lib/studio/draw-brand";
 import { CAPTION_SIZES, type BrandTemplate } from "@/lib/studio/brand-template";
 import type { MusicTrack } from "@/lib/studio/music";
+import { STRIP_TILE, stripCount, stripTile } from "@/lib/studio/strip";
 import { saveStudioEdit, startStudioJob, studioStatus, switchToLatestVideoRender } from "@/server/actions/studio";
 import { StudioRenders } from "./studio-renders";
 import { StudioTranscript } from "./studio-transcript";
@@ -18,6 +19,7 @@ import { AutoPanel, BrandPanel, ChapterInspector, FormatPanel, MusicPanel, Voice
 type Selection = { kind: "clip" | "blur" | "note" | "zoom" | "chapter"; id: string } | null;
 type Job = { kind: string; status: string; detail: string };
 type JobKind = "words" | "pii" | "zoom";
+type InspectorTab = "edit" | "assist" | "style" | "audio";
 const ANNOTATION_LABEL: Record<AnnotationKind, string> = { box: "Box", arrow: "Arrow", text: "Text", badge: "Step number", spotlight: "Spotlight" };
 type Save = { state: "saved" | "saving" | "unsaved" } | { state: "error"; message: string };
 
@@ -272,7 +274,7 @@ export function StudioEditor({ projectId, initialEdl, initialRevision, mediaUrl,
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
-      if (t.closest("input, textarea, select, [contenteditable='true'], [data-transcript]")) return;
+      if (t.closest("input, textarea, select, [contenteditable='true'], [data-transcript], [role='tab']")) return;
       const k = e.key.toLowerCase();
       if (k === " ") { e.preventDefault(); toggle(); }
       else if (k === "arrowleft") { e.preventDefault(); step(e.shiftKey ? -FPS : -1); }
@@ -447,8 +449,11 @@ export function StudioEditor({ projectId, initialEdl, initialRevision, mediaUrl,
   const noteBlocks = useMemo(() => lanes(edl.annotations.map((a, k) => ({ item: a, k, ranges: toOutput(edl, a.srcStart, a.srcEnd) }))), [edl]);
   const zoomBlocks = useMemo(() => lanes(edl.zooms.map((z, k) => ({ item: z, k, ranges: toOutput(edl, z.srcStart, z.srcEnd) }))), [edl]);
   const chapterMarks = useMemo(() => edl.chapters.flatMap((c) => { const r = toOutput(edl, c.srcTime, c.srcTime + 0.01)[0]; return r ? [{ c, at: r.start }] : []; }), [edl]);
-  const laneRows = (n: number) => `${Math.max(30, n * LANE_PX + 6)}px`;
-  const rows = `24px 22px 44px ${laneRows(zoomBlocks.count)} ${laneRows(blurBlocks.count)} ${laneRows(noteBlocks.count)} 18px`;
+  // Busy tracks get thinner lanes, so 30 found blur boxes don't push the rest of the timeline off screen.
+  const lanePx = (n: number) => (n > 8 ? 10 : n > 4 ? 15 : LANE_PX);
+  const zl = lanePx(zoomBlocks.count), bl = lanePx(blurBlocks.count), nl = lanePx(noteBlocks.count);
+  const laneRows = (n: number) => `${Math.max(30, n * lanePx(n) + 6)}px`;
+  const rows = `26px 26px 54px 34px ${laneRows(zoomBlocks.count)} ${laneRows(blurBlocks.count)} ${laneRows(noteBlocks.count)} 20px`;
   const caption = captionsOn && !media.burnedCaptions ? cues.find((c) => here.srcTime >= c.start && here.srcTime < c.end)?.text ?? null : null;
   const activeBlurs = blursAt(edl, here.srcTime);
   const activeNotes = annotationsAt(edl, here.srcTime);
@@ -521,24 +526,52 @@ export function StudioEditor({ projectId, initialEdl, initialRevision, mediaUrl,
     if (!r.ok) setBaseError(r.error.message); else router.refresh();
   };
 
+  // --- Inspector tabs. Selecting something on the timeline or the video shows the Edit tab; a tab the
+  // user picks stays until the next selection (stored with the selection it was picked under).
+  const [tabChoice, setTabChoice] = useState<{ tab: InspectorTab; under: Selection }>({ tab: "edit", under: null });
+  const tab: InspectorTab = sel && sel !== tabChoice.under ? "edit" : tabChoice.tab;
+  const chooseTab = (t: InspectorTab) => setTabChoice({ tab: t, under: sel });
+  // The timeline's pictures (made on the server once per video; see lib/studio/strip.ts).
+  const stripUrl = `/api/projects/${projectId}/studio/strip?kind=frames`, waveUrl = `/api/projects/${projectId}/studio/strip?kind=wave`;
+  const TH = 44, TW = (TH * STRIP_TILE.w) / STRIP_TILE.h;
+  const stripCols = STRIP_TILE.cols, stripRows = Math.ceil(stripCount(edl.sourceDuration) / STRIP_TILE.cols);
+  const shapeLabel = edl.output.aspect === "16:9" ? "16:9" : `${edl.output.aspect} · ${edl.output.fit === "fill" ? "fill" : "fit"}`;
+  const zoomNow = !aiming && view.zoom > 1.01 ? view.zoom : null;
+
+
   return (
-    <div className="studio" style={{ display: "grid", gap: 12 }}>
-      <div className="callout tip"><b>Studio (beta).</b>&nbsp;Edits here never change the original recording or the Video tab. Studio renders are listed below and labelled as Studio.</div>
+    <div className="studio" data-testid="studio">
+      <header className="st-head">
+        <div className="st-brand"><span className="st-logo" aria-hidden><Clapperboard size={18} /></span><span className="st-name">Studio</span><span className="st-beta">Beta</span></div>
+        <div className="st-project">
+          <span className="st-title" title={project.title}>{project.title}</span>
+          <span className="st-sub">{stamp(total)} · {edl.clips.length} clip{edl.clips.length === 1 ? "" : "s"} · {shapeLabel}{edl.zooms.length ? ` · ${edl.zooms.length} zoom${edl.zooms.length === 1 ? "" : "s"}` : ""}{edl.chapters.length ? ` · ${edl.chapters.length} chapters` : ""}</span>
+        </div>
+        <span className="spacer" />
+        <span className={`st-save s-${save.state}`} role="status" data-testid="studio-save">{saveLabel}</span>
+        <div className="st-history">
+          <button className="st-icon" onClick={undo} disabled={!past.length} aria-label="Undo (Ctrl+Z)" title="Undo · Ctrl+Z" data-testid="studio-undo"><Undo2 size={17} aria-hidden /></button>
+          <button className="st-icon" onClick={redo} disabled={!future.length} aria-label="Redo (Ctrl+Shift+Z)" title="Redo · Ctrl+Shift+Z"><Redo2 size={17} aria-hidden /></button>
+        </div>
+        <a className="btn primary st-export" href="#studio-export"><Film size={16} aria-hidden /> Export</a>
+      </header>
+
+      <p className="st-note">Edits here never change the original recording or the Video tab. Exports are listed at the bottom and labelled as Studio.</p>
       {media.kind === "render" && (
-        <div className="callout tip" role="status" data-testid="studio-base">
+        <div className="st-banner" role="status" data-testid="studio-base">
           <b>Editing the {media.label}.</b>&nbsp;This project has no screen recording, so Studio edits the video the Video tab made from it.
           {media.newerRender && <> A newer Video tab render exists. <button className="btn sm" onClick={() => void adoptLatest()} disabled={!canEdit}>Use the latest Video tab render</button></>}
           {baseError && <span role="alert" style={{ color: "var(--error)" }}> {baseError}</span>}
         </div>
       )}
-      {!canEdit && <div className="callout warn" role="status"><b>{canEditProject ? "Editing is paused." : "Read only."}</b>&nbsp;{canEditProject ? "Studio is updating this edit; it unlocks when that finishes." : "This project is in review, so its edit can't change right now."}</div>}
+      {!canEdit && <div className="st-banner warn" role="status"><b>{canEditProject ? "Editing is paused." : "Read only."}</b>&nbsp;{canEditProject ? "Studio is updating this edit; it unlocks when that finishes." : "This project is in review, so its edit can't change right now."}</div>}
 
-      <div className="studio-main">
-        <div style={{ display: "grid", gap: 8, minWidth: 0 }}>
+      <div className="st-work">
+        <div className="st-stagecol">
           <div className="player studio-stage" ref={stage}>
             <div className="studio-frame" style={frame} data-testid="studio-frame" data-aspect={aiming ? "aim" : edl.output.aspect}>
               <div className="studio-picture" style={pic} data-testid="studio-picture">
-                <video ref={video} src={mediaUrl} preload="auto" playsInline className="studio-video" aria-label="Studio preview"
+                <video ref={video} src={mediaUrl} preload="auto" playsInline className="studio-video" aria-label="Studio preview" onClick={toggle}
                   onLoadedMetadata={(e) => { setDims({ vw: e.currentTarget.videoWidth, vh: e.currentTarget.videoHeight }); seek(0); }}
                   onSeeked={() => setFrame((n) => n + 1)} onLoadedData={() => setFrame((n) => n + 1)} />
                 <div className="studio-overlay" style={{ inset: 0 }}>
@@ -583,57 +616,116 @@ export function StudioEditor({ projectId, initialEdl, initialRevision, mediaUrl,
               {showLowerThird && <canvas ref={brandCanvas} className="studio-notes" aria-hidden data-testid="preview-lower-third" />}
               {caption && <span className="studio-caption" style={captionCss}>{caption}</span>}
             </div>
+            <div className="st-hud" aria-hidden>
+              <span className="st-chip">{aiming ? "Aiming zoom · whole screen" : shapeLabel}</span>
+              {zoomNow && <span className="st-chip on">{zoomNow.toFixed(1)}× zoom</span>}
+            </div>
+            {/* A hint only: clicking the picture plays or pauses, so it never covers boxes or callouts. */}
+            {!playing && <span className="st-bigplay" aria-hidden><Play size={30} /></span>}
           </div>
           {track && <audio ref={musicEl} src={track.url} preload="auto" loop style={{ display: "none" }}
             onPlay={(e) => { e.currentTarget.volume = edl.music.volume; }} />}
 
-          <div className="row studio-toolbar" role="toolbar" aria-label="Playback and editing">
-            <button className="iconbtn" onClick={toggle} aria-label={playing ? "Pause (Space)" : "Play (Space)"} data-testid="studio-play">{playing ? <Pause size={16} aria-hidden /> : <Play size={16} aria-hidden />}</button>
-            <button className="iconbtn" onClick={() => step(-1)} aria-label="Back one frame (Left arrow)"><ChevronLeft size={16} aria-hidden /></button>
-            <button className="iconbtn" onClick={() => step(1)} aria-label="Forward one frame (Right arrow)"><ChevronRight size={16} aria-hidden /></button>
-            <span className="meta" style={{ fontVariantNumeric: "tabular-nums" }} data-testid="studio-time">{stamp(outT)} / {stamp(total)}</span>
-            <span className="studio-sep" />
-            <button className="btn sm" onClick={split} disabled={!canEdit} data-testid="studio-split"><Scissors size={14} aria-hidden /> Split (S)</button>
-            <button className="btn sm" onClick={deleteSelected} disabled={!canEdit || !sel || (sel.kind === "clip" && edl.clips.length <= 1)} data-testid="studio-delete"><Trash2 size={14} aria-hidden /> Delete</button>
-            <button className="btn sm" onClick={blur} disabled={!canEdit} data-testid="studio-blur"><EyeOff size={14} aria-hidden /> Blur (B)</button>
-            <button className="btn sm" onClick={zoomIn} disabled={!canEdit} data-testid="studio-zoom-add"><ZoomIn size={14} aria-hidden /> Zoom (Z)</button>
-            <button className="btn sm" onClick={chapter} disabled={!canEdit} data-testid="studio-chapter-add"><Bookmark size={14} aria-hidden /> Chapter (M)</button>
-            <span className="studio-sep" />
-            <span className="meta">Add</span>
-            <button className="iconbtn" onClick={() => annotate("box")} disabled={!canEdit} aria-label="Add a box" title="Box" data-testid="add-box"><Square size={16} aria-hidden /></button>
-            <button className="iconbtn" onClick={() => annotate("arrow")} disabled={!canEdit} aria-label="Add an arrow" title="Arrow" data-testid="add-arrow"><ArrowUpRight size={16} aria-hidden /></button>
-            <button className="iconbtn" onClick={() => annotate("text")} disabled={!canEdit} aria-label="Add a text callout" title="Text" data-testid="add-text"><Type size={16} aria-hidden /></button>
-            <button className="iconbtn" onClick={() => annotate("badge")} disabled={!canEdit} aria-label="Add a step number" title="Step number" data-testid="add-badge"><CircleDot size={16} aria-hidden /></button>
-            <button className="iconbtn" onClick={() => annotate("spotlight")} disabled={!canEdit} aria-label="Add a spotlight" title="Spotlight" data-testid="add-spotlight"><Sun size={16} aria-hidden /></button>
-            <span className="studio-sep" />
-            <button className="iconbtn" onClick={undo} disabled={!past.length} aria-label="Undo (Ctrl+Z)" data-testid="studio-undo"><Undo2 size={16} aria-hidden /></button>
-            <button className="iconbtn" onClick={redo} disabled={!future.length} aria-label="Redo (Ctrl+Shift+Z)"><Redo2 size={16} aria-hidden /></button>
-            <span className="spacer" />
-            {!media.burnedCaptions && <label className="row" style={{ gap: 6 }}><input type="checkbox" checked={captionsOn} onChange={(e) => setCaptionsOn(e.target.checked)} data-testid="captions-on" /> <span className="meta">Captions</span></label>}
-            <span className="meta" role="status" data-testid="studio-save" style={save.state === "error" ? { color: "var(--error)" } : undefined}>{saveLabel}</span>
+          <div className="st-transport" role="toolbar" aria-label="Playback and editing">
+            <div className="st-tools">
+              <Tool testId="studio-split" label="Split" icon={Scissors} onClick={split} disabled={!canEdit} hint="S" />
+              <Tool testId="studio-delete" label="Delete" icon={Trash2} onClick={deleteSelected} disabled={!canEdit || !sel || (sel.kind === "clip" && edl.clips.length <= 1)} hint="Del" />
+              <span className="st-sep" />
+              <Tool testId="studio-zoom-add" label="Zoom" icon={ZoomIn} onClick={zoomIn} disabled={!canEdit} hint="Z" />
+              <Tool testId="studio-blur" label="Blur" icon={EyeOff} onClick={blur} disabled={!canEdit} hint="B" />
+              <Tool testId="studio-chapter-add" label="Chapter" icon={Bookmark} onClick={chapter} disabled={!canEdit} hint="M" />
+            </div>
+            <div className="st-play">
+              <button className="st-icon" onClick={() => step(-FPS)} aria-label="Back one second (Shift+Left)" title="Back 1 s"><SkipBack size={16} aria-hidden /></button>
+              <button className="st-icon" onClick={() => step(-1)} aria-label="Back one frame (Left arrow)" title="Back one frame"><ChevronLeft size={18} aria-hidden /></button>
+              <button className="st-playbtn" onClick={toggle} aria-label={playing ? "Pause (Space)" : "Play (Space)"} data-testid="studio-play">{playing ? <Pause size={20} aria-hidden /> : <Play size={20} aria-hidden />}</button>
+              <button className="st-icon" onClick={() => step(1)} aria-label="Forward one frame (Right arrow)" title="Forward one frame"><ChevronRight size={18} aria-hidden /></button>
+              <button className="st-icon" onClick={() => step(FPS)} aria-label="Forward one second (Shift+Right)" title="Forward 1 s"><SkipForward size={16} aria-hidden /></button>
+              <span className="st-time" data-testid="studio-time"><b>{stamp(outT)}</b> / {stamp(total)}</span>
+            </div>
+            <div className="st-tools end">
+              <span className="st-addl">Add</span>
+              <Tool testId="add-box" label="Box" icon={Square} onClick={() => annotate("box")} disabled={!canEdit} />
+              <Tool testId="add-arrow" label="Arrow" icon={ArrowUpRight} onClick={() => annotate("arrow")} disabled={!canEdit} />
+              <Tool testId="add-text" label="Text" icon={Type} onClick={() => annotate("text")} disabled={!canEdit} />
+              <Tool testId="add-badge" label="Step number" icon={CircleDot} onClick={() => annotate("badge")} disabled={!canEdit} />
+              <Tool testId="add-spotlight" label="Spotlight" icon={Sun} onClick={() => annotate("spotlight")} disabled={!canEdit} />
+              {!media.burnedCaptions && (
+                <label className="st-toggle" title="Show captions in the preview"><input type="checkbox" checked={captionsOn} onChange={(e) => setCaptionsOn(e.target.checked)} data-testid="captions-on" /><Captions size={16} aria-hidden /><span className="sr">Captions</span></label>
+              )}
+            </div>
           </div>
         </div>
 
-        <aside className="card pad studio-inspector" aria-label="Selected item">
-          {selClip >= 0 ? <ClipInspector edl={edl} index={selClip} canEdit={canEdit} apply={apply} />
-            : selBlur ? <BlurInspector edl={edl} blur={selBlur} canEdit={canEdit} apply={apply} playheadSrc={here.srcTime} />
-            : selNote ? <NoteInspector edl={edl} note={selNote} canEdit={canEdit} apply={apply} playheadSrc={here.srcTime} focus={focusText === selNote.id} onFocused={() => setFocusText(null)} />
-            : selZoom ? <ZoomInspector edl={edl} zoom={selZoom} canEdit={canEdit} apply={apply} playheadSrc={here.srcTime} />
-            : selChapter ? <ChapterInspector edl={edl} chapter={selChapter} canEdit={canEdit} apply={apply} playheadSrc={here.srcTime} />
-            : <Help />}
+        <aside className="st-inspector" aria-label="Inspector">
+          <div className="st-tabs" role="tablist" aria-label="Inspector sections" onKeyDown={(e) => {
+            // Arrow keys move between tabs (the standard tab pattern).
+            if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+            e.preventDefault();
+            const order: InspectorTab[] = ["edit", "assist", "style", "audio"];
+            const next = order[(order.indexOf(tab) + (e.key === "ArrowRight" ? 1 : 3)) % 4]!;
+            chooseTab(next);
+            document.getElementById(`st-tab-${next}`)?.focus();
+          }}>
+            {([["edit", "Edit", SlidersHorizontal], ["assist", "Assist", Sparkles], ["style", "Style", Palette], ["audio", "Audio", Music]] as [InspectorTab, string, typeof Play][]).map(([key, label, Icon]) => (
+              <button key={key} type="button" role="tab" id={`st-tab-${key}`} aria-controls={`st-panel-${key}`} aria-selected={tab === key} tabIndex={tab === key ? 0 : -1} className="st-tab" onClick={() => chooseTab(key)} data-testid={`tab-${key}`}>
+                <Icon size={15} aria-hidden /> {label}
+              </button>
+            ))}
+          </div>
+          <div className="st-panel" role="tabpanel" id="st-panel-edit" aria-labelledby="st-tab-edit" hidden={tab !== "edit"}>
+            <div className="card pad studio-inspector" aria-label="Selected item">
+              {selClip >= 0 ? <ClipInspector edl={edl} index={selClip} canEdit={canEdit} apply={apply} />
+                : selBlur ? <BlurInspector edl={edl} blur={selBlur} canEdit={canEdit} apply={apply} playheadSrc={here.srcTime} />
+                : selNote ? <NoteInspector edl={edl} note={selNote} canEdit={canEdit} apply={apply} playheadSrc={here.srcTime} focus={focusText === selNote.id} onFocused={() => setFocusText(null)} />
+                : selZoom ? <ZoomInspector edl={edl} zoom={selZoom} canEdit={canEdit} apply={apply} playheadSrc={here.srcTime} />
+                : selChapter ? <ChapterInspector edl={edl} chapter={selChapter} canEdit={canEdit} apply={apply} playheadSrc={here.srcTime} />
+                : <Help />}
+            </div>
+          </div>
+          <div className="st-panel" role="tabpanel" id="st-panel-assist" aria-labelledby="st-tab-assist" hidden={tab !== "assist"}>
+            <AutoPanel edl={edl} canEdit={canEdit} apply={apply} busy={busy("zoom")} detail={jobOf("zoom")?.detail ?? null} result={jobOf("zoom")?.detail ?? null} onFind={() => void runJob("zoom")} scenes={scenes} />
+            <div className="card pad" style={{ display: "grid", gap: 8 }} data-testid="studio-pii">
+              <h2 className="card-h" style={{ margin: 0 }}><ScanFace size={16} aria-hidden /> Personal data</h2>
+              <p className="meta" style={{ margin: 0 }}>Reads the text on screen and blurs email addresses, phone numbers and the names of people in this workspace. Found boxes are marked “A” on the Blur track: check each one, move or delete it. Running it again replaces only the found boxes.</p>
+              <button className="btn primary" style={{ justifySelf: "start" }} disabled={!canEditProject || busy("pii") || busy("zoom")} onClick={() => void runJob("pii")} data-testid="find-pii">
+                <ScanFace size={14} aria-hidden /> {busy("pii") ? jobOf("pii")!.detail : "Find personal data"}
+              </button>
+              {jobOf("pii") && !busy("pii") && <p className="meta" role="status" style={{ margin: 0 }} data-testid="pii-result">{jobOf("pii")!.detail}</p>}
+              {busy("pii") && <p className="meta" style={{ margin: 0 }}>Editing is paused until it finishes.</p>}
+            </div>
+            {jobError && <div className="callout warn" role="alert"><b>{jobError}</b></div>}
+          </div>
+          <div className="st-panel" role="tabpanel" id="st-panel-style" aria-labelledby="st-tab-style" hidden={tab !== "style"}>
+            <FormatPanel edl={edl} canEdit={canEdit} apply={apply} />
+            <BrandPanel edl={edl} canEdit={canEdit} apply={apply} template={template} project={project} />
+          </div>
+          <div className="st-panel" role="tabpanel" id="st-panel-audio" aria-labelledby="st-tab-audio" hidden={tab !== "audio"}>
+            <MusicPanel edl={edl} canEdit={canEdit} apply={apply} tracks={music} />
+            <VoicePanel edl={edl} canEdit={canEdit} apply={apply} languages={languages} primaryLanguage={primaryLanguage} voices={voices} ttsLanguages={ttsLanguages} burnedCaptions={media.burnedCaptions} />
+            <div className="card pad" style={{ display: "grid", gap: 6 }} data-testid="studio-audio">
+              <h2 className="card-h" style={{ margin: 0 }}><AudioLines size={16} aria-hidden /> Clean-up</h2>
+              <label className="check"><input type="checkbox" checked={edl.audio.denoise} disabled={!canEdit} onChange={(e) => apply(setAudio(edl, { denoise: e.target.checked }))} data-testid="audio-denoise" /><span>Reduce background noise<small>Hum, fans, keyboard hiss</small></span></label>
+              <label className="check"><input type="checkbox" checked={edl.audio.normalize} disabled={!canEdit} onChange={(e) => apply(setAudio(edl, { normalize: e.target.checked }))} data-testid="audio-normalize" /><span>Even out the volume<small>Same loudness throughout (EBU R128)</small></span></label>
+              <p className="meta" style={{ margin: 0 }}>Applied in the render; the preview plays the original sound.</p>
+            </div>
+          </div>
         </aside>
       </div>
 
-      <div className="card pad" style={{ display: "grid", gap: 8 }}>
-        <div className="row between">
+      <section className="st-timelinecard" aria-label="Timeline">
+        <div className="st-tlhead">
           <h2 className="card-h" style={{ margin: 0 }}>Timeline</h2>
-          <label className="row" style={{ gap: 6 }}><span className="meta">Zoom</span><input type="range" min={2} max={200} step={1} value={Math.round(pxPerSec)} onChange={(e) => setPx(Number(e.target.value))} aria-label="Timeline zoom" /></label>
+          <label className="st-pos"><span className="sr">Position</span>
+            <input type="range" min={0} max={Math.max(0.1, total)} step={1 / FPS} value={Math.min(outT, total)} onChange={(e) => { stop(); seek(Number(e.target.value)); }} aria-label="Playhead position" aria-valuetext={stamp(outT)} />
+          </label>
+          <label className="st-scale" title="Timeline zoom"><ZoomIn size={14} aria-hidden /><input type="range" min={2} max={200} step={1} value={Math.round(pxPerSec)} onChange={(e) => setPx(Number(e.target.value))} aria-label="Timeline zoom" /></label>
         </div>
-        <label className="row" style={{ gap: 8 }}><span className="meta">Position</span>
-          <input type="range" min={0} max={Math.max(0.1, total)} step={1 / FPS} value={Math.min(outT, total)} onChange={(e) => { stop(); seek(Number(e.target.value)); }} style={{ flex: 1 }} aria-label="Playhead position" aria-valuetext={stamp(outT)} />
-        </label>
         <div className="studio-timeline">
-          <div className="studio-labels" aria-hidden style={{ gridTemplateRows: rows }}><span>Time</span><span>Chapters</span><span>Video</span><span>Zoom</span><span>Blur</span><span>Notes</span><span>Captions</span></div>
+          <div className="studio-labels" aria-hidden style={{ gridTemplateRows: rows }}>
+            <span><Clock size={13} /> Time</span><span><Bookmark size={13} /> Chapters</span><span><Film size={13} /> Video</span><span><AudioLines size={13} /> Sound</span>
+            <span><ZoomIn size={13} /> Zoom</span><span><EyeOff size={13} /> Blur</span><span><StickyNote size={13} /> Notes</span><span><Captions size={13} /> Captions</span>
+          </div>
           <div className="studio-scroll">
             <div ref={lane} className="studio-lanes" style={{ width, gridTemplateRows: rows }}>
               <div className="studio-ruler" onPointerDown={scrub} data-testid="studio-ruler">
@@ -647,34 +739,55 @@ export function StudioEditor({ projectId, initialEdl, initialRevision, mediaUrl,
                 ))}
               </div>
               <div className="studio-track" onPointerDown={scrub} role="group" aria-label="Video clips">
+                {edl.clips.map((c, i) => {
+                  const w = Math.max(6, clipLength(c) * pxPerSec);
+                  const slots = Math.min(200, Math.ceil(w / TW));
+                  return (
+                    <button key={c.id} type="button" className={`studio-clip${selClip === i ? " on" : ""}`} style={{ left: starts[i]! * pxPerSec, width: w }}
+                      onPointerDown={(e) => { e.stopPropagation(); setSel({ kind: "clip", id: c.id }); }} data-testid="studio-clip"
+                      aria-label={`Clip ${i + 1}: ${stamp(starts[i]!)} to ${stamp(starts[i]! + clipLength(c))}${c.speed !== 1 ? `, ${c.speed}× speed` : ""}`} aria-pressed={selClip === i}>
+                      <span className="studio-film" aria-hidden>
+                        {Array.from({ length: slots }, (_, k) => {
+                          const t = Math.min(c.srcOut, c.srcIn + ((k + 0.5) * TW / pxPerSec) * c.speed);
+                          const { col, row } = stripTile(edl.sourceDuration, t);
+                          return <span key={k} style={{ width: TW, backgroundImage: `url(${stripUrl})`, backgroundSize: `${stripCols * TW}px ${stripRows * TH}px`, backgroundPosition: `${-col * TW}px ${-row * TH}px` }} />;
+                        })}
+                      </span>
+                      {canEdit && selClip === i && <span className="studio-edge l" onPointerDown={(e) => dragEdge(e, i, "in")} aria-hidden />}
+                      <span className="studio-clip-label">{i + 1}{c.speed !== 1 ? ` · ${c.speed}×` : ""}</span>
+                      {canEdit && selClip === i && <span className="studio-edge r" onPointerDown={(e) => dragEdge(e, i, "out")} aria-hidden />}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className={`studio-track st-sound${edl.voice.ai ? " replaced" : ""}`} onPointerDown={scrub} aria-hidden>
                 {edl.clips.map((c, i) => (
-                  <button key={c.id} type="button" className={`studio-clip${selClip === i ? " on" : ""}`} style={{ left: starts[i]! * pxPerSec, width: Math.max(6, clipLength(c) * pxPerSec) }}
-                    onPointerDown={(e) => { e.stopPropagation(); setSel({ kind: "clip", id: c.id }); }} data-testid="studio-clip"
-                    aria-label={`Clip ${i + 1}: ${stamp(starts[i]!)} to ${stamp(starts[i]! + clipLength(c))}${c.speed !== 1 ? `, ${c.speed}× speed` : ""}`} aria-pressed={selClip === i}>
-                    {canEdit && selClip === i && <span className="studio-edge l" onPointerDown={(e) => dragEdge(e, i, "in")} aria-hidden />}
-                    <span className="studio-clip-label">{i + 1}{c.speed !== 1 ? ` · ${c.speed}×` : ""}</span>
-                    {canEdit && selClip === i && <span className="studio-edge r" onPointerDown={(e) => dragEdge(e, i, "out")} aria-hidden />}
-                  </button>
+                  <span key={c.id} className="st-wave" style={{ left: starts[i]! * pxPerSec, width: Math.max(6, clipLength(c) * pxPerSec),
+                    backgroundImage: `url(${waveUrl})`, backgroundSize: `${(edl.sourceDuration / c.speed) * pxPerSec}px 100%`, backgroundPosition: `${(-c.srcIn / c.speed) * pxPerSec}px 0` }} />
                 ))}
+                {edl.voice.ai && <span className="st-wave-note">AI voice replaces this sound in the render</span>}
               </div>
               <div className="studio-track" onPointerDown={scrub} role="group" aria-label="Zooms">
-                {zoomBlocks.items.map(({ item: z, k, r, j, lane: l }) => (
-                  <button key={`${z.id}-${j}`} type="button" className={`studio-zoomblock${selZoom?.id === z.id ? " on" : ""}`} data-testid="studio-zoomblock"
-                    style={{ left: r.start * pxPerSec, width: Math.max(6, (r.end - r.start) * pxPerSec), top: 3 + l * LANE_PX, height: LANE_PX - 4 }}
-                    onPointerDown={(e) => { e.stopPropagation(); setSel({ kind: "zoom", id: z.id }); stop(); seek(r.start + Math.min(0.8, (r.end - r.start) / 2)); }} aria-label={`Zoom ${k + 1}${z.auto ? " (found)" : ""}: ${z.scale}×, ${stamp(r.start)} to ${stamp(r.end)}`}>{z.auto ? "A" : ""} {z.scale}×</button>
-                ))}
+                {zoomBlocks.items.map(({ item: z, k, r, j, lane: l }) => {
+                  const w = Math.max(6, (r.end - r.start) * pxPerSec), ramp = Math.min(w / 2.5, ZOOM_RAMP_SEC * pxPerSec);
+                  return (
+                    <button key={`${z.id}-${j}`} type="button" className={`studio-zoomblock${selZoom?.id === z.id ? " on" : ""}${z.auto ? " auto" : ""}`} data-testid="studio-zoomblock"
+                      data-thin={zl < 15 || undefined} style={{ left: r.start * pxPerSec, width: w, top: 3 + l * zl, height: zl - 3, clipPath: `polygon(0 100%, ${ramp}px 0, calc(100% - ${ramp}px) 0, 100% 100%)` }}
+                      onPointerDown={(e) => { e.stopPropagation(); setSel({ kind: "zoom", id: z.id }); stop(); seek(r.start + Math.min(0.8, (r.end - r.start) / 2)); }} aria-label={`Zoom ${k + 1}${z.auto ? " (found)" : ""}: ${z.scale}×, ${stamp(r.start)} to ${stamp(r.end)}`}>{z.auto ? "A · " : ""}{z.scale}×</button>
+                  );
+                })}
               </div>
               <div className="studio-track" onPointerDown={scrub} role="group" aria-label="Blur boxes">
                 {blurBlocks.items.map(({ item: b, k, r, j, lane: l }) => (
-                  <button key={`${b.id}-${j}`} type="button" className={`studio-blurblock${selBlur?.id === b.id ? " on" : ""}`}
-                    style={{ left: r.start * pxPerSec, width: Math.max(6, (r.end - r.start) * pxPerSec), top: 3 + l * LANE_PX, height: LANE_PX - 4 }}
+                  <button key={`${b.id}-${j}`} type="button" className={`studio-blurblock${selBlur?.id === b.id ? " on" : ""}`} data-thin={bl < 15 || undefined}
+                    style={{ left: r.start * pxPerSec, width: Math.max(6, (r.end - r.start) * pxPerSec), top: 3 + l * bl, height: bl - 3 }}
                     onPointerDown={(e) => { e.stopPropagation(); setSel({ kind: "blur", id: b.id }); stop(); seek(r.start); }} aria-label={`Blur ${k + 1}${b.label ? ` (${b.label})` : ""}: ${stamp(r.start)} to ${stamp(r.end)}`}>{b.auto ? "A" : k + 1}</button>
                 ))}
               </div>
               <div className="studio-track" onPointerDown={scrub} role="group" aria-label="Annotations">
                 {noteBlocks.items.map(({ item: a, k, r, j, lane: l }) => (
-                  <button key={`${a.id}-${j}`} type="button" className={`studio-noteblock${selNote?.id === a.id ? " on" : ""}`}
-                    style={{ left: r.start * pxPerSec, width: Math.max(6, (r.end - r.start) * pxPerSec), top: 3 + l * LANE_PX, height: LANE_PX - 4 }}
+                  <button key={`${a.id}-${j}`} type="button" className={`studio-noteblock${selNote?.id === a.id ? " on" : ""}`} data-thin={nl < 15 || undefined}
+                    style={{ left: r.start * pxPerSec, width: Math.max(6, (r.end - r.start) * pxPerSec), top: 3 + l * nl, height: nl - 3 }}
                     onPointerDown={(e) => { e.stopPropagation(); setSel({ kind: "note", id: a.id }); stop(); seek(r.start); }} aria-label={`${ANNOTATION_LABEL[a.kind]} ${k + 1}: ${stamp(r.start)} to ${stamp(r.end)}`}>{ANNOTATION_LABEL[a.kind]}</button>
                 ))}
               </div>
@@ -685,38 +798,26 @@ export function StudioEditor({ projectId, initialEdl, initialRevision, mediaUrl,
             </div>
           </div>
         </div>
-      </div>
+      </section>
 
-      <div className="studio-lower">
+      <div className="st-text">
         <StudioTranscript edl={edl} words={words} playheadSrc={here.srcTime} canEdit={canEdit} job={jobOf("words")} speechAvailable={speechAvailable}
           onPrepare={() => void runJob("words")} onSeek={seekSource} onCut={cutRange} onTidy={tidy} />
-        <div style={{ display: "grid", gap: 12, alignContent: "start" }}>
-          <AutoPanel edl={edl} canEdit={canEdit} apply={apply} busy={busy("zoom")} detail={jobOf("zoom")?.detail ?? null} result={jobOf("zoom")?.detail ?? null} onFind={() => void runJob("zoom")} scenes={scenes} />
-          <div className="card pad" style={{ display: "grid", gap: 8 }} data-testid="studio-pii">
-            <h2 className="card-h" style={{ margin: 0 }}>Personal data</h2>
-            <p className="meta" style={{ margin: 0 }}>Reads the text on screen and blurs email addresses, phone numbers and the names of people in this workspace. Found boxes are marked “A” on the Blur track: check each one, move or delete it. Running it again replaces only the found boxes.</p>
-            <button className="btn primary" style={{ justifySelf: "start" }} disabled={!canEditProject || busy("pii") || busy("zoom")} onClick={() => void runJob("pii")} data-testid="find-pii">
-              <ScanFace size={14} aria-hidden /> {busy("pii") ? jobOf("pii")!.detail : "Find personal data"}
-            </button>
-            {jobOf("pii") && !busy("pii") && <p className="meta" role="status" style={{ margin: 0 }} data-testid="pii-result">{jobOf("pii")!.detail}</p>}
-            {busy("pii") && <p className="meta" style={{ margin: 0 }}>Editing is paused until it finishes.</p>}
-          </div>
-          <FormatPanel edl={edl} canEdit={canEdit} apply={apply} />
-          <BrandPanel edl={edl} canEdit={canEdit} apply={apply} template={template} project={project} />
-          <MusicPanel edl={edl} canEdit={canEdit} apply={apply} tracks={music} />
-          <VoicePanel edl={edl} canEdit={canEdit} apply={apply} languages={languages} primaryLanguage={primaryLanguage} voices={voices} ttsLanguages={ttsLanguages} burnedCaptions={media.burnedCaptions} />
-          <div className="card pad" style={{ display: "grid", gap: 6 }} data-testid="studio-audio">
-            <h2 className="card-h" style={{ margin: 0 }}>Audio</h2>
-            <label className="check"><input type="checkbox" checked={edl.audio.denoise} disabled={!canEdit} onChange={(e) => apply(setAudio(edl, { denoise: e.target.checked }))} data-testid="audio-denoise" /><span>Reduce background noise<small>Hum, fans, keyboard hiss</small></span></label>
-            <label className="check"><input type="checkbox" checked={edl.audio.normalize} disabled={!canEdit} onChange={(e) => apply(setAudio(edl, { normalize: e.target.checked }))} data-testid="audio-normalize" /><span>Even out the volume<small>Same loudness throughout (EBU R128)</small></span></label>
-            <p className="meta" style={{ margin: 0 }}>Applied in the render; the preview plays the original sound.</p>
-          </div>
-          {jobError && <div className="callout warn" role="alert"><b>{jobError}</b></div>}
-        </div>
       </div>
 
-      <StudioRenders projectId={projectId} canRender={canEdit} captions={captionsOn && !media.burnedCaptions} beforeRender={flush} blocked={save.state === "error"} />
+      <div id="studio-export" className="st-export-area">
+        <StudioRenders projectId={projectId} canRender={canEdit} captions={captionsOn && !media.burnedCaptions} beforeRender={flush} blocked={save.state === "error"} />
+      </div>
     </div>
+  );
+}
+
+/** A transport tool: icon, label (shown when there's room) and its keyboard shortcut. */
+function Tool({ testId, label, icon: Icon, onClick, disabled, hint }: { testId: string; label: string; icon: typeof Play; onClick: () => void; disabled: boolean; hint?: string }) {
+  return (
+    <button type="button" className="st-tool" onClick={onClick} disabled={disabled} aria-label={hint ? `${label} (${hint})` : label} title={hint ? `${label} · ${hint}` : label} data-testid={testId}>
+      <Icon size={17} aria-hidden /><span className="st-tool-l">{label}</span>{hint && <kbd>{hint}</kbd>}
+    </button>
   );
 }
 

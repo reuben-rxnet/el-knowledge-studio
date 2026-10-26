@@ -7,12 +7,12 @@ import { db } from "@/lib/database/client";
 import { mediaDurationSec, probeMedia, runFfmpeg } from "@/lib/services/local/ffmpeg";
 import { synthesizeSpeech, TTS_LANGUAGES, TTS_VOICES, type TtsVoice } from "@/lib/services/local/speech";
 import { saveFile, saveStream, storageKeyFor, withLocalFile } from "@/lib/services/storage";
-import { clipAnnotations, clipCues, clipLength, clipStarts, edlSchema, outputChapters, outputCues, outputDuration, OUTPUT_SIZE, toOutput, type Cue, type Edl } from "@/lib/studio/edl";
+import { clipAnnotations, clipCues, clipLength, clipStarts, edlSchema, outputChapters, outputCues, outputDuration, OUTPUT_SIZE, type Cue, type Edl } from "@/lib/studio/edl";
 import { byDrawOrder, drawAnnotation, type Ctx } from "@/lib/studio/draw-annotations";
 import { drawCard, drawLowerThird, logoSvg, type BrandCtx, type LogoImage } from "@/lib/studio/draw-brand";
 import { CAPTION_SIZES } from "@/lib/studio/brand-template";
 import { BUILT_IN_MUSIC } from "@/lib/studio/music";
-import { captionStyle, cardArgs, ffmetadataChapters, finishArgs, segmentArgs, segmentFilter } from "@/lib/studio/render-args";
+import { captionStyle, cardArgs, ffmetadataChapters, finishArgs, segmentArgs, segmentFilter, voicePlacement, voiceSpeed } from "@/lib/studio/render-args";
 import { getBrandTemplate, getUploadedMusic } from "@/server/settings";
 import { studioCaptions, studioSource } from "@/server/studio";
 
@@ -209,14 +209,13 @@ async function voiceTrack(jobId: string, dir: string, edl: Edl, captions: Record
   const lang = TTS_LANGUAGES.includes(language) ? language : primary;
   if (!TTS_LANGUAGES.includes(lang)) throw new Error(`AI voice speaks ${TTS_LANGUAGES.join(", ")} only; this project's captions are in ${lang}.`);
   const voice = (TTS_VOICES.some((v) => v.id === edl.voice.voice) ? edl.voice.voice : TTS_VOICES[0].id) as TtsVoice;
-  const placed = (captions[lang] ?? []).flatMap((c) => { const r = toOutput(edl, c.start, c.end)[0]; return r ? [{ at: r.start + offset, text: c.text }] : []; }).sort((a, b) => a.at - b.at);
+  const placed = voicePlacement(edl, captions[lang] ?? [], offset, total);
   if (!placed.length) throw new Error("There's no script to read: AI voice needs the script's paragraphs.");
   const inputs: string[] = [], delays: string[] = [];
   for (const [k, s] of placed.entries()) {
     await progress(jobId, `Generating AI voice ${k + 1} of ${placed.length} (the first run loads the voice model)`);
-    const slot = Math.max(0.8, (placed[k + 1]?.at ?? total) - s.at - 0.15);
     let clip = await synthesizeSpeech(s.text, voice);
-    if (clip.seconds > slot) clip = await synthesizeSpeech(s.text, voice, Math.min(1.35, clip.seconds / slot));
+    if (clip.seconds > s.slot) clip = await synthesizeSpeech(s.text, voice, voiceSpeed(clip.seconds, s.slot));
     const file = `voice-${k}.wav`;
     await writeFile(path.join(dir, file), clip.wav);
     inputs.push("-i", file);

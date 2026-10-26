@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, CheckCircle2, Disc, Globe2, Sparkles, Upload } from "lucide-react";
+import { ArrowRight, CheckCircle2, Clock, Disc, Gauge, Globe2, Languages, Layers, PlayCircle, Search, Send, ShieldCheck, Sparkles, Upload, type LucideIcon } from "lucide-react";
 import { requirePageSession } from "@/lib/auth/session";
 import { db } from "@/lib/database/client";
 import { csv, freshnessOf } from "@/lib/domain/constants";
@@ -27,15 +27,15 @@ export default async function HomePage() {
   const current = projects.filter((p) => freshnessOf(p.nextReviewAt, p.status) === "current").length;
   const turnaround = decided.length ? decided.reduce((n, r) => n + (r.decidedAt!.getTime() - r.createdAt.getTime()), 0) / decided.length / 86_400_000 : null;
   const watchHours = projects.reduce((n, p) => n + (p.views * p.durationSec * 0.7) / 3600, 0);
-  const kpis: [string, string, string][] = [
-    ["Content created", formatNumber(projects.length), "In this workspace"],
-    ["Published assets", formatNumber(published), "Across all destinations"],
-    ["Hours of viewing", formatNumber(Math.round(watchHours)), "Estimated from views × 70% completion"],
-    ["Estimated hours saved", formatNumber(Math.round(watchHours * 0.4)), "Assumption: 0.4 h saved per viewing hour"],
-    ["Translation coverage", targets ? `${Math.round((approvedTr / targets) * 100)}%` : "—", `${approvedTr} of ${targets} target languages approved`],
-    ["Content freshness", projects.length ? `${Math.round((current / projects.length) * 100)}%` : "—", `${projects.length - current} items need review`],
-    ["Approval turnaround", turnaround === null ? "—" : `${turnaround.toFixed(1)} days`, "Average, last decisions"],
-    ["Search success rate", feedback.length ? `${Math.round((feedback.filter((f) => f.helpful).length / feedback.length) * 100)}%` : "—", feedback.length ? `${feedback.length} ratings` : "No answer ratings yet"],
+  const kpis: [string, string, string, LucideIcon][] = [
+    ["Content created", formatNumber(projects.length), "In this workspace", Layers],
+    ["Published assets", formatNumber(published), "Across all destinations", Send],
+    ["Hours of viewing", formatNumber(Math.round(watchHours)), "Estimated from views × 70% completion", PlayCircle],
+    ["Estimated hours saved", formatNumber(Math.round(watchHours * 0.4)), "Assumption: 0.4 h saved per viewing hour", Clock],
+    ["Translation coverage", targets ? `${Math.round((approvedTr / targets) * 100)}%` : "—", `${approvedTr} of ${targets} target languages approved`, Languages],
+    ["Content freshness", projects.length ? `${Math.round((current / projects.length) * 100)}%` : "—", `${projects.length - current} items need review`, ShieldCheck],
+    ["Approval turnaround", turnaround === null ? "—" : `${turnaround.toFixed(1)} days`, "Average, last decisions", Gauge],
+    ["Search success rate", feedback.length ? `${Math.round((feedback.filter((f) => f.helpful).length / feedback.length) * 100)}%` : "—", feedback.length ? `${feedback.length} ratings` : "No answer ratings yet", Search],
   ];
   const continueWorking = projects.filter((p) => ["ai-generated", "creator-review", "changes-requested", "draft", "processing"].includes(p.status)).slice(0, 4);
   const trending = projects.filter((p) => p.publishedVersion).sort((a, b) => b.views - a.views).slice(0, 4);
@@ -68,8 +68,8 @@ export default async function HomePage() {
       </div>
 
       <div className="grid g4">
-        {kpis.map(([label, value, note]) => (
-          <div key={label} className="card kpi"><span className="meta">{label}</span><span className="v">{value}</span><span className="meta">{note}</span></div>
+        {kpis.map(([label, value, note, Icon]) => (
+          <div key={label} className="card kpi"><span className="kpi-ico" aria-hidden><Icon size={18} /></span><span className="meta">{label}</span><span className="v">{value}</span><span className="meta">{note}</span></div>
         ))}
       </div>
 

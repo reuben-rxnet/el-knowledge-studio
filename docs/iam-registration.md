@@ -28,6 +28,8 @@ Microsoft Graph **delegated**: `openid`, `profile`, `email`, `User.Read`. These 
 
 **Planned second request: document conversion through Microsoft 365.** Presentation and document videos show the real slides. In production, the app would upload the file to one dedicated SharePoint site in the EssilorLuxottica tenant and ask Microsoft Graph for a PDF (`GET /drives/{drive}/items/{item}/content?format=pdf`). Office renders it there, so company templates and fonts look exactly as in PowerPoint, and the file never leaves the tenant. This needs the app-only permission **`Sites.Selected`**, granted on that one site only (write access, to upload and delete the temporary copy). It is not needed for sign-in. Until it is granted, the server uses LibreOffice.
 
+**Azure roles for the app's managed identity (not Entra app permissions).** On the media storage account: **Storage Blob Data Contributor** (read and write the app's files) and **Storage Blob Delegator** (request a user delegation key, so the app can hand the browser a 15-minute, write-only upload link for one file; shared keys stay disabled). Both are assigned in `infra/main.bicep`. The storage account also needs a **CORS rule** for direct uploads: origin = the app's URL, methods `PUT, OPTIONS`, headers `content-type, x-ms-*` (exposed: `x-ms-*, etag`). See docs/deployment.md, Uploads.
+
 ## 4. Who gets access: app roles (recommended)
 
 - Set **Assignment required = Yes** on the enterprise application, so only assigned people can sign in.

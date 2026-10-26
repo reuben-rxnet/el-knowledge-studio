@@ -5,6 +5,7 @@ import { assertPermission, requireSession } from "@/lib/auth/session";
 import { callStructured, OpenAIError } from "@/lib/services/openai/client";
 import { aiProviderId } from "@/lib/services/registry";
 import { recordAudit } from "@/server/audit";
+import { deleteOrphans, findOrphans } from "@/server/cleanup";
 import { getUploadLimits, piiCodexEnabled, storePiiCodex, storeUploadLimits, uploadCeilingMb } from "@/server/settings";
 import { CATEGORY_META, UPLOAD_CATEGORIES, formatLimit, type UploadCategory, type UploadLimits } from "@/lib/validation/upload-limits";
 import { run, type ActionResult } from "./result";
@@ -73,5 +74,30 @@ export async function savePiiCodex(enabled: boolean): Promise<ActionResult<boole
     await recordAudit(s, { action: "settings.changed", resourceType: "setting", resourceId: "pii.codex", resourceLabel: `Studio personal-data detection: Codex check ${v ? "switched on" : "switched off"}` });
     revalidatePath("/admin");
     return v;
+  });
+}
+
+export interface UnusedFiles { count: number; totalBytes: number; oldest: string | null }
+
+/** Counts stored files nothing refers to (older than a day). Platform administrators only; read-only. */
+export async function findUnusedFiles(): Promise<ActionResult<UnusedFiles>> {
+  return run(async () => {
+    const s = await requireSession();
+    assertPermission(s, "enterprise.manage");
+    const r = await findOrphans();
+    return { count: r.count, totalBytes: r.totalBytes, oldest: r.oldest?.toISOString() ?? null };
+  });
+}
+
+/** Deletes those files, checking references again first. Platform administrators only, audited. */
+export async function deleteUnusedFiles(): Promise<ActionResult<{ deleted: number; bytes: number; failed: number }>> {
+  return run(async () => {
+    const s = await requireSession();
+    assertPermission(s, "enterprise.manage");
+    const r = await deleteOrphans();
+    const mb = (r.bytes / 1048576).toFixed(1);
+    await recordAudit(s, { action: "storage.cleaned", resourceType: "storage", resourceId: "storage", resourceLabel: `Storage clean-up: ${r.deleted} unused file${r.deleted === 1 ? "" : "s"} deleted (${mb} MB)${r.failed ? `, ${r.failed} couldn't be deleted` : ""}`, outcome: r.failed ? "failure" : "success" });
+    revalidatePath("/admin");
+    return r;
   });
 }

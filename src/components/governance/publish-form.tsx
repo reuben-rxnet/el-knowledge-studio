@@ -1,14 +1,17 @@
 "use client";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { Send } from "lucide-react";
+import { Film, Send } from "lucide-react";
+import { mmss } from "@/lib/utilities/format";
 import { publishProject } from "@/server/actions/review";
 import { MockLabel } from "@/components/common/badges";
 import { useToast } from "@/components/common/toast";
 
-export function PublishForm({ projectId, version, destinations, languages, audience, defaults }: {
+export interface PublishVideo { title: string; engine: string; durationSec: number; chapters: number }
+
+export function PublishForm({ projectId, version, destinations, languages, audience, defaults, video }: {
   projectId: string; version: number; destinations: { key: string; label: string; target: string; allowed: boolean; live: boolean }[];
-  languages: { code: string; label: string }[]; audience: string; defaults: string[];
+  languages: { code: string; label: string }[]; audience: string; defaults: string[]; video: PublishVideo | null;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -35,6 +38,11 @@ export function PublishForm({ projectId, version, destinations, languages, audie
   return (
     <div className="card pad" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div className="row between"><h2 className="card-h">Publish version {version}</h2><MockLabel>{destinations.some((d) => d.live) ? `Simulated except ${destinations.filter((d) => d.live).map((d) => d.label).join(", ")}` : "Mock connectors · nothing is sent"}</MockLabel></div>
+      {video ? (
+        <div className="callout tip" data-testid="publish-video"><Film size={16} aria-hidden /><span><b>Video:</b> {video.title}<span className="meta" style={{ display: "block" }}>{video.engine} render · {mmss(video.durationSec)}{video.chapters ? ` · ${video.chapters} chapter${video.chapters === 1 ? "" : "s"}` : ""}</span></span></div>
+      ) : (
+        <div className="callout warn" data-testid="publish-video"><Film size={16} aria-hidden /><span><b>No video chosen.</b> Only the guide is published. To include a video, choose “Use for publishing” on a finished render on the Video tab or in Studio.</span></div>
+      )}
       <fieldset style={{ border: 0, margin: 0, padding: 0 }}>
         <legend className="sr">Destinations</legend>
         <div className="checks">

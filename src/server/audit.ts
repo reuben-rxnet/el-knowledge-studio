@@ -33,7 +33,9 @@ export type AuditAction =
   | "quiz.approved"
   | "translation.edited"
   | "screenshots.captured"
-  | "video.rendered";
+  | "video.rendered"
+  | "video.chosen"
+  | "storage.cleaned";
 
 interface AuditInput {
   action: AuditAction;
