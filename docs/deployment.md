@@ -48,6 +48,11 @@ The new timeline editor, a tab next to Video while the `studio-beta` feature fla
 - **Preview = render:** the browser plays the edit (jumping between clips at their speeds, drawing blur boxes and captions over the video); the server renders the same list.
 - **Rendering:** one FFmpeg segment per clip (frame-accurate seek, speed, blur boxes, burned-in captions), then joined without re-encoding. Memory stays flat for long recordings. Renders are stored with `engine = "studio"`; the Video tab lists only its own.
 - **Phase 1 scope:** recordings and videos (not audio-only or documents); original audio only (no AI voice yet); captions in the primary language.
+- **Phase 2:**
+  - **Edit by text:** word timings from Whisper (`onnx-community/whisper-base_timestamped`, set `LOCAL_STT_WORDS_MODEL` for a larger one), kept on the source file. Deleting words cuts that stretch from the edit; "Tidy up" removes filler words and shortens pauses in one undo step.
+  - **Annotations:** box, arrow, text callout, step number and spotlight, drawn by one shared canvas routine: in the preview, and on the server as transparent PNGs overlaid by FFmpeg.
+  - **Audio:** noise reduction (`afftdn`) per clip; even volume (`loudnorm`, EBU R128) as a second pass on the audio only. Render-only; the preview plays the original sound.
+  - **Personal data:** a frame every 2 s, text read with Tesseract (only when the screen changed), rules for emails, phone numbers and names of workspace members, optional Codex check of the read text (Administration › "Personal data in Studio", off by default). Found boxes replace earlier found ones; hand-drawn boxes stay. Tesseract's English data (about 10 MB) downloads into `MODELS_DIR/tesseract` on first use: pre-load it in the image if servers have no internet access.
 
 ## Rate limits
 

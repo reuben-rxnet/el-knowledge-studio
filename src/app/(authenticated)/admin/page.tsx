@@ -14,7 +14,8 @@ import { PageHeader } from "@/components/common/page-header";
 import { TestConnectionButton } from "@/components/admin/test-connection";
 import { transcriptionModel } from "@/lib/services/openai/audio";
 import { UploadLimitsForm } from "@/components/admin/upload-limits-form";
-import { getUploadLimits, uploadCeilingMb, uploadLimitsChange } from "@/server/settings";
+import { getUploadLimits, piiCodexEnabled, uploadCeilingMb, uploadLimitsChange } from "@/server/settings";
+import { PiiCodexToggle } from "@/components/admin/pii-codex-toggle";
 import { relativeTime } from "@/lib/utilities/format";
 
 export const metadata: Metadata = { title: "Administration" };
@@ -44,11 +45,12 @@ export default async function AdminPage() {
   if (!s.permissions.has("workspace.manage")) {
     return <section><div className="card"><EmptyState icon={Lock} title="Administration is for workspace administrators" action={<Link className="btn" href="/">Back to Home</Link>}>It needs the workspace.manage permission. In the demo, switch persona to Workspace administrator.</EmptyState></div></section>;
   }
-  const [members, flags, limits, limitsChange] = await Promise.all([
+  const [members, flags, limits, limitsChange, piiCodex] = await Promise.all([
     db.workspaceMembership.findMany({ where: { workspaceId: s.workspace.id }, include: { user: true }, orderBy: { createdAt: "asc" } }),
     db.featureFlag.findMany(),
     getUploadLimits(),
     uploadLimitsChange(),
+    piiCodexEnabled(),
   ]);
   const ai = aiStatus();
   return (
@@ -71,6 +73,7 @@ export default async function AdminPage() {
           </div>
           <UploadLimitsForm limits={limits} ceilingMb={uploadCeilingMb()} canEdit={s.permissions.has("enterprise.manage")}
             changed={limitsChange ? `Last changed ${relativeTime(limitsChange.at)}${limitsChange.by ? ` by ${limitsChange.by}` : ""}.` : null} />
+          <PiiCodexToggle enabled={piiCodex} canEdit={s.permissions.has("enterprise.manage")} />
           <div className="card pad">
             <h2 className="card-h">Feature flags</h2>
             <dl className="dl">{flags.map((f) => <div key={f.key} style={{ display: "contents" }}><dt>{f.key}</dt><dd>{f.enabled ? "On" : "Off"} · {f.description}</dd></div>)}</dl>

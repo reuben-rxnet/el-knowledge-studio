@@ -17,15 +17,32 @@ export interface Clip { id: string; srcIn: number; srcOut: number; speed: number
  * A blurred rectangle, anchored to the source so it stays on the right content after cuts and moves.
  * x, y, w, h are fractions of the video frame (0-1), so they don't depend on its resolution.
  */
-export interface BlurBox { id: string; srcStart: number; srcEnd: number; x: number; y: number; w: number; h: number }
-export interface Edl { v: 1; sourceDuration: number; clips: Clip[]; blurs: BlurBox[] }
+export interface BlurBox {
+  id: string; srcStart: number; srcEnd: number; x: number; y: number; w: number; h: number;
+  /** Set on boxes found by personal-data detection: what was found ("Email address"), never the text itself. */
+  label?: string;
+  auto?: boolean;
+}
+export const ANNOTATION_KINDS = ["box", "arrow", "text", "badge", "spotlight"] as const;
+export type AnnotationKind = (typeof ANNOTATION_KINDS)[number];
+export const ANNOTATION_COLORS = { red: "#E53935", yellow: "#FFC83D", blue: "#1E88E5", white: "#FFFFFF" } as const;
+export type AnnotationColor = keyof typeof ANNOTATION_COLORS;
+/**
+ * Drawn on top of the video, anchored to the source like blur boxes. Box, text, badge and spotlight
+ * use the rectangle x, y, w, h (fractions of the frame); an arrow runs from (x, y) to (x + w, y + h).
+ */
+export interface Annotation { id: string; kind: AnnotationKind; srcStart: number; srcEnd: number; x: number; y: number; w: number; h: number; text: string; color: AnnotationColor }
+export interface AudioOptions { denoise: boolean; normalize: boolean }
+export interface Edl { v: 1; sourceDuration: number; clips: Clip[]; blurs: BlurBox[]; annotations: Annotation[]; audio: AudioOptions }
 export interface Cue { start: number; end: number; text: string }
+/** A spoken word with its time in the source (from Whisper's word timestamps). */
+export interface Word { text: string; start: number; end: number }
 
 const round = (n: number) => Math.round(n * 1000) / 1000;
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
 export function defaultEdl(sourceDuration: number, id = "c1"): Edl {
-  return { v: 1, sourceDuration: round(sourceDuration), clips: [{ id, srcIn: 0, srcOut: round(sourceDuration), speed: 1 }], blurs: [] };
+  return { v: 1, sourceDuration: round(sourceDuration), clips: [{ id, srcIn: 0, srcOut: round(sourceDuration), speed: 1 }], blurs: [], annotations: [], audio: { denoise: false, normalize: false } };
 }
 
 export const clipLength = (c: Clip) => (c.srcOut - c.srcIn) / c.speed;
@@ -151,6 +168,98 @@ export function updateBlur(e: Edl, id: string, patch: Partial<Omit<BlurBox, "id"
 
 export const removeBlur = (e: Edl, id: string): Edl => ({ ...e, blurs: e.blurs.filter((b) => b.id !== id) });
 
+/** Replaces the automatically found blur boxes with a new set; boxes drawn by hand stay. */
+export const replaceAutoBlurs = (e: Edl, found: BlurBox[]): Edl => ({ ...e, blurs: [...e.blurs.filter((b) => !b.auto), ...found.map((b) => fitBlur(e, { ...b, auto: true }))] });
+
+// --- Editing by text ------------------------------------------------------------------------------
+
+/**
+ * Removes a stretch of the recording from every clip that shows it: a clip wholly inside is dropped,
+ * one that overlaps is shortened, one that contains it is split in two. This is what deleting words does.
+ */
+export function cutSource(e: Edl, srcStart: number, srcEnd: number, newId: () => string): Edl {
+  if (srcEnd - srcStart <= 1e-6) return e;
+  const clips = e.clips.flatMap((c) => {
+    if (srcEnd <= c.srcIn || srcStart >= c.srcOut) return [c];
+    const keep: Clip[] = [];
+    if (srcStart - c.srcIn >= MIN_CLIP_SEC) keep.push({ ...c, srcOut: round(srcStart) });
+    if (c.srcOut - srcEnd >= MIN_CLIP_SEC) keep.push({ ...c, id: keep.length ? newId() : c.id, srcIn: round(srcEnd) });
+    return keep;
+  });
+  return clips.length ? { ...e, clips } : e; // never cut everything
+}
+
+/** Is this moment of the recording in the edited video? */
+export const isShown = (e: Edl, srcTime: number) => e.clips.some((c) => srcTime >= c.srcIn && srcTime < c.srcOut);
+
+const FILLERS = new Set(["um", "umm", "uh", "uhm", "uhh", "er", "erm", "ah", "hmm", "mm", "mhm"]);
+export const isFiller = (w: Word) => FILLERS.has(w.text.toLowerCase().replace(/[^a-z]/g, ""));
+
+/**
+ * Stretches to cut for "tidy up": filler words (um, uh...) and pauses longer than `pauseSec`, keeping
+ * `keepSec` of each pause so speech doesn't run together. Only what is still in the video counts.
+ */
+export function tidyCuts(e: Edl, words: Word[], o: { fillers: boolean; pauseSec: number | null; keepSec?: number }): { start: number; end: number; kind: "filler" | "pause" }[] {
+  const keep = o.keepSec ?? 0.35;
+  const shown = words.filter((w) => isShown(e, (w.start + w.end) / 2)).sort((a, b) => a.start - b.start);
+  const cuts: { start: number; end: number; kind: "filler" | "pause" }[] = [];
+  if (o.fillers) for (const w of shown) if (isFiller(w)) cuts.push({ start: w.start, end: w.end, kind: "filler" });
+  if (o.pauseSec !== null) {
+    for (let i = 1; i < shown.length; i++) {
+      const gap = shown[i]!.start - shown[i - 1]!.end;
+      if (gap > o.pauseSec) cuts.push({ start: shown[i - 1]!.end + keep / 2, end: shown[i]!.start - keep / 2, kind: "pause" });
+    }
+  }
+  return cuts.filter((c) => c.end - c.start > 0.05).sort((a, b) => a.start - b.start);
+}
+
+// --- Annotations ----------------------------------------------------------------------------------
+
+const ANNOTATION_SIZE: Record<AnnotationKind, { w: number; h: number }> = {
+  box: { w: 0.3, h: 0.15 }, spotlight: { w: 0.35, h: 0.25 }, text: { w: 0.4, h: 0.08 }, badge: { w: 0.05, h: 0.09 }, arrow: { w: 0.12, h: 0.12 },
+};
+
+function fitAnnotation(e: Edl, a: Annotation): Annotation {
+  let srcStart = clamp(a.srcStart, 0, e.sourceDuration - MIN_BLUR_SEC);
+  const srcEnd = clamp(a.srcEnd, srcStart + MIN_BLUR_SEC, e.sourceDuration);
+  if (srcEnd - srcStart < MIN_BLUR_SEC) srcStart = srcEnd - MIN_BLUR_SEC;
+  const base = { ...a, srcStart: round(srcStart), srcEnd: round(srcEnd), text: a.text.slice(0, 120) };
+  if (a.kind === "arrow") {
+    // Both ends stay inside the frame; the arrow keeps a visible length.
+    const x = clamp(a.x, 0, 1), y = clamp(a.y, 0, 1);
+    return { ...base, x: round(x), y: round(y), w: round(clamp(x + a.w, 0, 1) - x), h: round(clamp(y + a.h, 0, 1) - y) };
+  }
+  const w = clamp(a.w, 0.02, 1), h = clamp(a.h, 0.02, 1);
+  return { ...base, w: round(w), h: round(h), x: round(clamp(a.x, 0, 1 - w)), y: round(clamp(a.y, 0, 1 - h)) };
+}
+
+/** Adds an annotation at output time t, 4 seconds long (or to the end of the clip). */
+export function addAnnotation(e: Edl, t: number, kind: AnnotationKind, id: string, text = ""): Edl {
+  const { index, srcTime } = locate(e, t);
+  const c = e.clips[index]!;
+  const { w, h } = ANNOTATION_SIZE[kind];
+  const defaults = { box: "", spotlight: "", arrow: "", badge: String(e.annotations.filter((a) => a.kind === "badge").length + 1), text: "Add your text" };
+  const a: Annotation = { id, kind, srcStart: srcTime, srcEnd: Math.max(Math.min(c.srcOut, srcTime + 4 * c.speed), srcTime + MIN_BLUR_SEC), x: 0.5 - w / 2, y: 0.4, w, h, text: text || defaults[kind], color: kind === "spotlight" ? "white" : kind === "text" ? "white" : "red" };
+  return { ...e, annotations: [...e.annotations, fitAnnotation(e, a)] };
+}
+
+export function updateAnnotation(e: Edl, id: string, patch: Partial<Omit<Annotation, "id" | "kind">>): Edl {
+  return { ...e, annotations: e.annotations.map((a) => (a.id === id ? fitAnnotation(e, { ...a, ...patch }) : a)) };
+}
+export const removeAnnotation = (e: Edl, id: string): Edl => ({ ...e, annotations: e.annotations.filter((a) => a.id !== id) });
+export const annotationsAt = (e: Edl, srcTime: number) => e.annotations.filter((a) => srcTime >= a.srcStart && srcTime < a.srcEnd);
+
+/** Annotations that touch one clip, with their times in that clip's own time. */
+export function clipAnnotations(e: Edl, index: number): (Annotation & { start: number; end: number })[] {
+  const c = e.clips[index]!;
+  return e.annotations.flatMap((a) => {
+    const s = Math.max(a.srcStart, c.srcIn), z = Math.min(a.srcEnd, c.srcOut);
+    return z - s > 1e-6 ? [{ ...a, start: (s - c.srcIn) / c.speed, end: (z - c.srcIn) / c.speed }] : [];
+  });
+}
+
+export const setAudio = (e: Edl, patch: Partial<AudioOptions>): Edl => ({ ...e, audio: { ...e.audio, ...patch } });
+
 // --- Validation (the server never trusts the browser's list) ------------------------------------
 
 const id = z.string().regex(/^[\w-]{1,40}$/);
@@ -159,7 +268,14 @@ export const edlSchema = z.object({
   v: z.literal(1),
   sourceDuration: z.number().positive(),
   clips: z.array(z.object({ id, srcIn: sec, srcOut: sec, speed: z.number().refine((s) => (SPEEDS as readonly number[]).includes(s), "Unsupported speed.") })).min(1).max(500),
-  blurs: z.array(z.object({ id, srcStart: sec, srcEnd: sec, x: z.number().min(0).max(1), y: z.number().min(0).max(1), w: z.number().min(0.01).max(1), h: z.number().min(0.01).max(1) })).max(500),
+  blurs: z.array(z.object({ id, srcStart: sec, srcEnd: sec, x: z.number().min(0).max(1), y: z.number().min(0).max(1), w: z.number().min(0.01).max(1), h: z.number().min(0.01).max(1), label: z.string().max(40).optional(), auto: z.boolean().optional() })).max(2000),
+  // Phase 1 lists have no annotations or audio options yet: they default to none / off.
+  annotations: z.array(z.object({
+    id, kind: z.enum(ANNOTATION_KINDS), srcStart: sec, srcEnd: sec,
+    x: z.number().min(0).max(1), y: z.number().min(0).max(1), w: z.number().min(-1).max(1), h: z.number().min(-1).max(1),
+    text: z.string().max(120), color: z.enum(Object.keys(ANNOTATION_COLORS) as [AnnotationColor, ...AnnotationColor[]]),
+  })).max(500).default([]),
+  audio: z.object({ denoise: z.boolean(), normalize: z.boolean() }).default({ denoise: false, normalize: false }),
 });
 
 /** Checks a list against the real recording length. Returns a problem in plain words, or null. */

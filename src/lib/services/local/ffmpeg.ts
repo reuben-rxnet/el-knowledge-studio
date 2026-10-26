@@ -63,9 +63,10 @@ const hms = (m: RegExpMatchArray | null | undefined) => (m ? Number(m[1]) * 3600
  * often have no duration in their header ("Duration: N/A"); then the file is read through without
  * decoding (stream copy to nowhere, milliseconds even for long files) and the last timestamp is used.
  */
-export async function probeMedia(filePath: string): Promise<{ durationSec: number; hasVideo: boolean; hasAudio: boolean }> {
+export async function probeMedia(filePath: string): Promise<{ durationSec: number; hasVideo: boolean; hasAudio: boolean; width: number; height: number }> {
   const head = await ffmpegStderr(["-i", filePath]);
-  const streams = { hasVideo: /Stream #\S+.*: Video:/.test(head), hasAudio: /Stream #\S+.*: Audio:/.test(head) };
+  const size = head.match(/Stream #\S+.*: Video:.*?, (\d{2,5})x(\d{2,5})/);
+  const streams = { hasVideo: /Stream #\S+.*: Video:/.test(head), hasAudio: /Stream #\S+.*: Audio:/.test(head), width: size ? Number(size[1]) : 0, height: size ? Number(size[2]) : 0 };
   let durationSec = hms(head.match(/Duration: (\d+):(\d+):(\d+(?:\.\d+)?)/));
   if (!durationSec && (streams.hasVideo || streams.hasAudio)) {
     const scan = await ffmpegStderr(["-i", filePath, "-map", "0", "-c", "copy", "-f", "null", "-"]);

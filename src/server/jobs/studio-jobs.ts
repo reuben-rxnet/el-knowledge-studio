@@ -1,0 +1,65 @@
+import "server-only";
+import { db } from "@/lib/database/client";
+import { probeMedia } from "@/lib/services/local/ffmpeg";
+import { detectScreenPii } from "@/lib/services/local/pii";
+import { transcribeWords } from "@/lib/services/local/speech";
+import { openAIScreenPii } from "@/lib/services/openai/services";
+import { aiProviderId, assertExternalAiAllowed } from "@/lib/services/registry";
+import { withLocalFile } from "@/lib/services/storage";
+import { edlSchema, replaceAutoBlurs } from "@/lib/studio/edl";
+import { piiCodexEnabled } from "@/server/settings";
+import { studioSource } from "@/server/studio";
+
+const progress = (id: string, detail: string) => db.studioJob.update({ where: { id }, data: { detail } });
+
+/**
+ * Runs one Studio background job:
+ *   words  word timings for text editing (Whisper on this server), kept on the source file
+ *   pii    personal data on screen: replaces the edit's automatic blur boxes (hand-drawn ones stay)
+ */
+export async function runStudioJob(jobId: string) {
+  const claim = await db.studioJob.updateMany({ where: { id: jobId, status: "queued" }, data: { status: "running", detail: "Starting" } });
+  if (!claim.count) return;
+  const job = await db.studioJob.findUniqueOrThrow({ where: { id: jobId } });
+  try {
+    const project = await db.project.findUniqueOrThrow({ where: { id: job.projectId } });
+    const source = await studioSource(project.id);
+    if (!source) throw new Error("This project has no recording.");
+
+    if (job.kind === "words") {
+      await progress(job.id, "Listening to the recording (the first run loads the speech model)");
+      const words = await withLocalFile(source.storageKey, (f) => transcribeWords(f, project.primaryLanguage));
+      await db.sourceAsset.update({ where: { id: source.id }, data: { words: JSON.stringify(words) } });
+      await finish(job.id, words.length ? `${words.length.toLocaleString()} words ready for editing` : "No speech was found in the recording");
+      return;
+    }
+
+    // pii: names from the app's directory (people in this workspace), plus Codex only if switched on.
+    const members = await db.workspaceMembership.findMany({ where: { workspaceId: project.workspaceId }, include: { user: { select: { displayName: true } } } });
+    const names = members.map((m) => m.user.displayName).filter((n) => n.trim().split(/\s+/).length >= 2);
+    let classify: ((lines: string[]) => Promise<{ line: number; parts: string[] }[]>) | undefined;
+    let note = "";
+    if (await piiCodexEnabled()) {
+      if (aiProviderId() !== "openai") note = " Codex check is on, but the AI provider is simulated here.";
+      else {
+        try { assertExternalAiAllowed(project.classification); classify = (lines) => openAIScreenPii(lines); }
+        catch { note = ` Codex check skipped: ${project.classification} content can't be sent to an external model.`; }
+      }
+    }
+    const found = await withLocalFile(source.storageKey, async (f) => {
+      const info = await probeMedia(f);
+      if (!info.width || !info.height) throw new Error("The recording's picture size couldn't be read.");
+      return detectScreenPii(f, { durationSec: info.durationSec, width: info.width, height: info.height, names, classify, onProgress: async (d, t) => { if (d % 5 === 0 || d === t) await progress(job.id, `Reading the screen: ${d} of ${t} frames`); } });
+    });
+    const row = await db.studioEdit.findUnique({ where: { projectId: project.id } });
+    if (!row) throw new Error("Open Studio again to start editing.");
+    const edl = replaceAutoBlurs(edlSchema.parse(JSON.parse(row.edl)), found.map((b, i) => ({ ...b, id: `auto${i + 1}`, auto: true })));
+    await db.studioEdit.update({ where: { projectId: project.id }, data: { edl: JSON.stringify(edl), revision: { increment: 1 }, updatedById: job.createdById } });
+    const counts = Object.entries(found.reduce<Record<string, number>>((m, b) => ({ ...m, [b.label]: (m[b.label] ?? 0) + 1 }), {})).map(([k, v]) => `${v} ${k.toLowerCase()}${v === 1 ? "" : "s"}`);
+    await finish(job.id, (found.length ? `Blurred ${counts.join(", ")}. Check each one before rendering.` : "No personal data found on screen.") + note);
+  } catch (e) {
+    await db.studioJob.update({ where: { id: job.id }, data: { status: "failed", detail: e instanceof Error ? e.message.slice(0, 300) : "The job failed.", completedAt: new Date() } });
+  }
+}
+
+const finish = (id: string, detail: string) => db.studioJob.update({ where: { id }, data: { status: "succeeded", detail, completedAt: new Date() } });

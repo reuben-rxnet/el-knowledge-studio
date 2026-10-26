@@ -26,3 +26,5 @@ Phase 3 (pilot) adds Microsoft's Azure SDKs, which run in the app:
 | `@azure/storage-blob`, `@azure/identity` | Blob storage with the app's managed identity | MIT |
 | [Azurite](https://github.com/Azure/Azurite) (development only, Docker) | Local Blob emulator for tests | MIT |
 | [PostgreSQL](https://www.postgresql.org) `postgres:16-alpine` (development only, Docker) | Local production check | PostgreSQL Licence |
+| [Tesseract](https://github.com/tesseract-ocr/tesseract) via [tesseract.js](https://github.com/naptha/tesseract.js) | Studio: reading on-screen text to find personal data to blur (language data downloads once into `MODELS_DIR/tesseract`) | Apache-2.0 |
+| Whisper `whisper-base_timestamped` (ONNX export) | Studio: word-level timings for editing by text (same weights as whisper-base, exported with attention outputs) | MIT |

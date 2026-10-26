@@ -5,7 +5,7 @@ import { assertPermission, requireSession } from "@/lib/auth/session";
 import { callStructured, OpenAIError } from "@/lib/services/openai/client";
 import { aiProviderId } from "@/lib/services/registry";
 import { recordAudit } from "@/server/audit";
-import { getUploadLimits, storeUploadLimits, uploadCeilingMb } from "@/server/settings";
+import { getUploadLimits, piiCodexEnabled, storePiiCodex, storeUploadLimits, uploadCeilingMb } from "@/server/settings";
 import { CATEGORY_META, UPLOAD_CATEGORIES, formatLimit, type UploadCategory, type UploadLimits } from "@/lib/validation/upload-limits";
 import { run, type ActionResult } from "./result";
 
@@ -58,6 +58,20 @@ export async function saveUploadLimits(input: Record<string, number>): Promise<A
     await recordAudit(s, { action: "settings.changed", resourceType: "setting", resourceId: "upload.limits", resourceLabel: `Upload limits: ${label}` });
     revalidatePath("/admin");
     revalidatePath("/create/upload");
+    return v;
+  });
+}
+
+/** Lets Studio's personal-data detection send screen text to Codex. Platform administrators only, audited. */
+export async function savePiiCodex(enabled: boolean): Promise<ActionResult<boolean>> {
+  return run(async () => {
+    const s = await requireSession();
+    assertPermission(s, "enterprise.manage");
+    const v = z.boolean().parse(enabled);
+    if ((await piiCodexEnabled()) === v) return v;
+    await storePiiCodex(v, s.user.id);
+    await recordAudit(s, { action: "settings.changed", resourceType: "setting", resourceId: "pii.codex", resourceLabel: `Studio personal-data detection: Codex check ${v ? "switched on" : "switched off"}` });
+    revalidatePath("/admin");
     return v;
   });
 }

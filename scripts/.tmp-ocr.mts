@@ -1,0 +1,18 @@
+import { readFileSync, writeFileSync } from "node:fs";
+import { createCanvas, loadImage } from "@napi-rs/canvas";
+import { createWorker } from "tesseract.js";
+const file = process.argv[2]!;
+const t0 = Date.now();
+const worker = await createWorker("eng", 1, { cachePath: "./models/tesseract" });
+console.log(`worker ready in ${Date.now() - t0} ms`);
+const t1 = Date.now();
+const { data } = await worker.recognize(readFileSync(file), {}, { blocks: true });
+console.log(`recognised in ${Date.now() - t1} ms`);
+const words = (data.blocks ?? []).flatMap((b) => b.paragraphs.flatMap((p) => p.lines.flatMap((l) => l.words)));
+console.log(words.map((w) => `${w.text}@${w.bbox.x0},${w.bbox.y0}-${w.bbox.x1},${w.bbox.y1}`).join(" "));
+const img = await loadImage(readFileSync(file));
+const c = createCanvas(img.width, img.height), g = c.getContext("2d");
+g.drawImage(img, 0, 0); g.strokeStyle = "red"; g.lineWidth = 2;
+for (const w of words) g.strokeRect(w.bbox.x0, w.bbox.y0, w.bbox.x1 - w.bbox.x0, w.bbox.y1 - w.bbox.y0);
+writeFileSync(process.argv[3]!, c.toBuffer("image/png"));
+await worker.terminate();

@@ -80,3 +80,79 @@ describe("Studio render commands", () => {
     expect(segmentFilter(e, 0, { hasAudio: false, captions: null })).toContain("anullsrc");
   });
 });
+
+describe("Studio phase 2: editing by text", () => {
+  const words = [
+    { text: "Open", start: 0.5, end: 0.8 }, { text: "the", start: 0.8, end: 0.95 }, { text: "report.", start: 0.95, end: 1.4 },
+    { text: "Um,", start: 1.5, end: 1.8 }, { text: "then", start: 4.0, end: 4.3 }, { text: "click", start: 4.3, end: 4.6 }, { text: "Save.", start: 4.6, end: 5.0 },
+  ];
+
+  it("cuts a stretch of the recording out of whichever clips show it", async () => {
+    const { cutSource } = await import("@/lib/studio/edl");
+    let n = 0;
+    const e = cutSource(defaultEdl(10), 2, 3, () => `x${++n}`);
+    expect(e.clips.map((c) => [c.srcIn, c.srcOut])).toEqual([[0, 2], [3, 10]]);
+    expect(outputDuration(e)).toBe(9);
+    // A stretch across a clip boundary shortens both sides; cutting everything is refused.
+    const e2 = cutSource(e, 1.5, 3.5, () => `x${++n}`);
+    expect(e2.clips.map((c) => [c.srcIn, c.srcOut])).toEqual([[0, 1.5], [3.5, 10]]);
+    expect(cutSource(defaultEdl(10), 0, 10, () => "y").clips).toHaveLength(1);
+  });
+
+  it("finds filler words and long pauses, keeping a short gap", async () => {
+    const { tidyCuts } = await import("@/lib/studio/edl");
+    const cuts = tidyCuts(defaultEdl(10), words, { fillers: true, pauseSec: 1, keepSec: 0.4 });
+    expect(cuts).toEqual([
+      { start: 1.5, end: 1.8, kind: "filler" },
+      { start: 2.0, end: 3.8, kind: "pause" }, // 1.8 -> 4.0 minus 0.2 kept on each side
+    ]);
+    expect(tidyCuts(defaultEdl(10), words, { fillers: false, pauseSec: null })).toEqual([]);
+  });
+});
+
+describe("Studio phase 2: annotations", () => {
+  it("adds, keeps inside the frame, and follows the content like blurs", async () => {
+    const { addAnnotation, updateAnnotation, clipAnnotations, moveClip: move } = await import("@/lib/studio/edl");
+    let e = addAnnotation(splitAt(sixty(), 30, "c2"), 40, "badge", "n1");
+    expect(e.annotations[0]).toMatchObject({ kind: "badge", text: "1", srcStart: 40, srcEnd: 44 });
+    e = addAnnotation(e, 40, "badge", "n2");
+    expect(e.annotations[1]!.text).toBe("2"); // step numbers count up
+    e = updateAnnotation(e, "n1", { x: 0.99 });
+    expect(e.annotations[0]!.x + e.annotations[0]!.w).toBeLessThanOrEqual(1);
+    e = move(e, 1, 0);
+    expect(clipAnnotations(e, 0)[0]).toMatchObject({ start: 10, end: 14 });
+  });
+
+  it("loads phase 1 edit lists, which have no annotations or audio options", async () => {
+    const { edlSchema } = await import("@/lib/studio/edl");
+    const old = { v: 1, sourceDuration: 12, clips: [{ id: "c1", srcIn: 0, srcOut: 12, speed: 1 }], blurs: [] };
+    expect(edlSchema.parse(old)).toMatchObject({ annotations: [], audio: { denoise: false, normalize: false } });
+  });
+
+  it("overlays each annotation layer while it's active, and adds noise reduction when asked", async () => {
+    const { addAnnotation, setAudio } = await import("@/lib/studio/edl");
+    const e = setAudio(addAnnotation(sixty(), 5, "arrow", "n1"), { denoise: true });
+    const f = segmentFilter(e, 0, { hasAudio: true, captions: null, layers: [{ input: 1, start: 5, end: 9 }] });
+    expect(f).toContain("[1:v]overlay=0:0:enable='between(t,5,9)'");
+    expect(f).toContain("afftdn");
+  });
+});
+
+describe("Studio phase 2: personal data on screen", () => {
+  it("finds emails, phone numbers and known names, without overlapping boxes", async () => {
+    const { ruleMatches } = await import("@/lib/services/local/pii");
+    const line = "From: jane.doe@example.com Phone: +1 555 0100 2233 Regards, Jane Doe";
+    const m = ruleMatches(line, ["Jane Doe", "jane doe"]);
+    expect(m.map((x) => [x.label, line.slice(x.start, x.end)]).sort()).toEqual([
+      ["Email address", "jane.doe@example.com"], ["Name", "Jane Doe"], ["Phone number", "+1 555 0100 2233"],
+    ]);
+    expect(ruleMatches("Order 1234 of 2025", [])).toEqual([]); // short numbers aren't phone numbers
+  });
+
+  it("joins the same item on consecutive frames into one box, covering one sample either side", async () => {
+    const { trackDetections } = await import("@/lib/services/local/pii");
+    const b = { x: 0.1, y: 0.1, w: 0.2, h: 0.05, label: "Email address" };
+    const boxes = trackDetections([{ t: 4, boxes: [b] }, { t: 6, boxes: [b] }, { t: 8, boxes: [] }, { t: 20, boxes: [b] }], 2, 30);
+    expect(boxes.map((x) => [x.srcStart, x.srcEnd])).toEqual([[2, 8], [18, 22]]);
+  });
+});

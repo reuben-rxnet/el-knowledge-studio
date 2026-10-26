@@ -4,6 +4,8 @@ import { db } from "@/lib/database/client";
 import { getProjectOr404 } from "@/server/queries";
 import { loadEdl, studioEnabled, studioSource } from "@/server/studio";
 import { StudioEditor } from "@/components/studio/studio-editor";
+import { localSpeechEnabled } from "@/lib/services/local/speech";
+import type { Word } from "@/lib/studio/edl";
 
 const LOCKED = ["processing", "sme-review", "approval-pending", "compliance-review"];
 
@@ -19,9 +21,15 @@ export default async function StudioPage({ params }: { params: Promise<{ id: str
   if (!source) return note("Studio edits recordings and videos.", "This project has no recording or video file. Use the Video tab for document and audio projects.");
   const loaded = await loadEdl(p.id, s.user.id);
   if (!loaded) return note("The recording couldn't be read.", "Its length couldn't be determined. Try uploading it again.");
-  const script = await db.scriptSegment.findMany({ where: { projectId: p.id }, orderBy: { order: "asc" }, select: { startSec: true, endSec: true, text: true } });
+  const [script, jobs] = await Promise.all([
+    db.scriptSegment.findMany({ where: { projectId: p.id }, orderBy: { order: "asc" }, select: { startSec: true, endSec: true, text: true } }),
+    Promise.all(["words", "pii"].map((kind) => db.studioJob.findFirst({ where: { projectId: p.id, kind }, orderBy: { createdAt: "desc" }, select: { kind: true, status: true, detail: true } }))),
+  ]);
+  let words: Word[] | null = null;
+  try { words = source.words ? (JSON.parse(source.words) as Word[]) : null; } catch { words = null; }
   return (
     <StudioEditor projectId={p.id} initialEdl={loaded.edl} initialRevision={loaded.revision} mediaUrl={`/api/projects/${p.id}/media`}
-      cues={script.map((c) => ({ start: c.startSec, end: c.endSec, text: c.text }))} canEdit={!LOCKED.includes(p.status)} />
+      cues={script.map((c) => ({ start: c.startSec, end: c.endSec, text: c.text }))} canEdit={!LOCKED.includes(p.status)}
+      words={words} speechAvailable={localSpeechEnabled()} initialJobs={jobs.filter((j) => j !== null)} />
   );
 }

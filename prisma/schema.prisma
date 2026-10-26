@@ -160,6 +160,7 @@ model SourceAsset {
   storedBytes Boolean  @default(false) // true when the file itself is stored (not only metadata)
   extractedText String? // text from documents or the transcript, used as AI source material
   pageImages  String? // JSON array of storage keys, one PNG per page or slide (documents and presentations)
+  words       String? // JSON array of spoken words with times ({ text, start, end }), for Studio's text editing
   createdAt   DateTime @default(now())
   createdById String
   project     Project  @relation(fields: [projectId], references: [id])
@@ -490,4 +491,18 @@ model StudioEdit {
   revision    Int      @default(1) // bumped on every save; a stale save is refused
   updatedAt   DateTime @updatedAt
   updatedById String
+}
+
+/// Studio (beta) background work: "words" (word timings for text editing) and "pii" (find personal data on screen).
+model StudioJob {
+  id          String    @id @default(cuid())
+  projectId   String
+  kind        String    // words | pii
+  status      String    // queued | running | succeeded | failed
+  detail      String    @default("Queued")
+  createdById String
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  @@index([projectId, kind, createdAt])
 }

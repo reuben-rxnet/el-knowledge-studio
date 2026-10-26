@@ -184,3 +184,21 @@ export function openAITranslator(deps?: ClientDeps): TextTranslationService {
     },
   };
 }
+
+/** Studio: which lines read from the screen contain personal data, and the exact parts to blur. */
+export async function openAIScreenPii(lines: string[], deps?: ClientDeps): Promise<{ line: number; parts: string[] }[]> {
+  if (!lines.length) return [];
+  const p = PROMPTS["pii.screen@1"];
+  const result = await callStructured(
+    {
+      schemaName: "el_screen_pii",
+      jsonSchema: obj({ findings: { type: "array", items: obj({ line: { type: "integer" }, parts: { type: "array", items: str } }) } }),
+      system: p.system,
+      user: ["Lines, numbered from 0:", frameSource("screen-text", lines.map((l, i) => `${i}: ${l}`).join("\n"))].join("\n"),
+      parse: (raw) => z.object({ findings: z.array(z.object({ line: z.number().int(), parts: z.array(z.string()) })) }).parse(raw).findings,
+    },
+    deps,
+  );
+  // Only parts that really occur in their line are kept (the model must not invent text).
+  return result.value.filter((f) => lines[f.line] !== undefined).map((f) => ({ line: f.line, parts: f.parts.filter((x) => x && lines[f.line]!.includes(x)) })).filter((f) => f.parts.length);
+}

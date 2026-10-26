@@ -6,8 +6,9 @@ import path from "node:path";
 import { db } from "@/lib/database/client";
 import { mediaDurationSec, probeMedia, runFfmpeg } from "@/lib/services/local/ffmpeg";
 import { saveStream, storageKeyFor, withLocalFile } from "@/lib/services/storage";
-import { clipCues, edlSchema, type Cue } from "@/lib/studio/edl";
-import { segmentArgs, segmentFilter } from "@/lib/studio/render-args";
+import { clipAnnotations, clipCues, edlSchema, type Cue } from "@/lib/studio/edl";
+import { byDrawOrder, drawAnnotation, type Ctx } from "@/lib/studio/draw-annotations";
+import { normalizeArgs, segmentArgs, segmentFilter } from "@/lib/studio/render-args";
 import { studioSource } from "@/server/studio";
 
 const srtTime = (s: number) => {
@@ -41,22 +42,39 @@ export async function runStudioRender(jobId: string) {
     const out = path.join(dir, "out.mp4");
 
     await withLocalFile(source.storageKey, async (input) => {
-      const { hasAudio } = await probeMedia(input);
+      const { hasAudio, width, height } = await probeMedia(input);
+      const { createCanvas } = await import("@napi-rs/canvas");
       const names: string[] = [];
       for (const [i] of edl.clips.entries()) {
         await progress(job.id, `Rendering clip ${i + 1} of ${edl.clips.length}`);
         const cues = job.captions ? clipCues(edl, i, segments) : [];
         const captions = cues.length ? `clip-${i + 1}.srt` : null;
         if (captions) await writeFile(path.join(dir, captions), srt(cues), "utf8");
+        // Each annotation becomes a transparent PNG at the recording's size, drawn by the same code as the preview.
+        const layerFiles: string[] = [];
+        const layers = [];
+        for (const [k, a] of byDrawOrder(clipAnnotations(edl, i)).entries()) {
+          const canvas = createCanvas(width || 1280, height || 720);
+          drawAnnotation(canvas.getContext("2d") as unknown as Ctx, a, canvas.width, canvas.height);
+          const file = `clip-${i + 1}-note-${k + 1}.png`;
+          await writeFile(path.join(dir, file), canvas.toBuffer("image/png"));
+          layerFiles.push(file);
+          layers.push({ input: k + 1, start: a.start, end: a.end });
+        }
         const filterScript = `clip-${i + 1}.filter`;
-        await writeFile(path.join(dir, filterScript), segmentFilter(edl, i, { hasAudio, captions }), "utf8");
+        await writeFile(path.join(dir, filterScript), segmentFilter(edl, i, { hasAudio, captions, layers }), "utf8");
         const name = `clip-${String(i + 1).padStart(3, "0")}.mp4`;
-        await runFfmpeg(segmentArgs(edl, i, { input, hasAudio, captions, filterScript, output: name }), { cwd: dir });
+        await runFfmpeg(segmentArgs(edl, i, { input, hasAudio, captions, filterScript, output: name, layerFiles }), { cwd: dir });
         names.push(name);
       }
       await progress(job.id, "Joining the clips");
       await writeFile(path.join(dir, "clips.txt"), names.map((n) => `file '${n}'`).join("\n"), "utf8");
-      await runFfmpeg(["-f", "concat", "-safe", "0", "-i", "clips.txt", "-c", "copy", "-movflags", "+faststart", "out.mp4"], { cwd: dir });
+      const joined = edl.audio.normalize ? "joined.mp4" : "out.mp4";
+      await runFfmpeg(["-f", "concat", "-safe", "0", "-i", "clips.txt", "-c", "copy", "-movflags", "+faststart", joined], { cwd: dir });
+      if (edl.audio.normalize) {
+        await progress(job.id, "Evening out the volume");
+        await runFfmpeg(normalizeArgs(joined, "out.mp4"), { cwd: dir });
+      }
     });
 
     await progress(job.id, "Saving the video");
